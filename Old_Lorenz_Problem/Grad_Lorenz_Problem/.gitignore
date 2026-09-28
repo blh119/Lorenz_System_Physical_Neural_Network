@@ -1,0 +1,11 @@
+# file types to ignore
+*.pdf
+*.xlsx
+*.csv
+*.xlsx
+*.png
+
+# folders to ignore
+__pycache__/**
+plots/**
+Research\ Papers/**

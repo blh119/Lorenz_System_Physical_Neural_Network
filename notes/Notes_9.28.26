@@ -1,0 +1,27 @@
+
+
+Visualizing Solutions
+    
+    Plot x, y, z positions over T 3d plot -> this is the reference solution
+    Plot x, y, z position of the NN -> predicted solution static plot
+    Plot the NN that is predicting that solution x, y, z -> predicted solution Check if we can plot for certain number of time steps
+    Plot the errors between the reference solution and the predicted solution log scale
+    Plot the total loss and each of the terms in the total loss
+    every time you through each step of Gradient Descent plot the total loss, physics loss, and the data loss only plot at the minima
+    
+Sampling
+    
+    True Random
+    Uniform Stratified Sample
+    Weigted Sampling with bias -> [.5 -1]
+    
+    
+Loops
+    
+    For each dt -> [.001, .0001, ... , 1e-6]
+
+Review
+    
+    Numerical Methods Paper    
+    
+    

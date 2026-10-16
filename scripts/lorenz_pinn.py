@@ -2,6 +2,11 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 
+# Use 64-bit floats everywhere (about 16 significant digits instead of 7),
+# so round-off stays far below the 1e-4 accuracy target.
+DTYPE = tf.float64
+tf.keras.backend.set_floatx("float64")  # Keras layers and weights follow this
+
 
 # make linear space function (unchanged)
 
@@ -127,7 +132,7 @@ class Lorenz_PINN_solver(Lorenz):
 
         # The physics weight changes during training, so it is a tf.Variable.
         # A plain Python float would get frozen into the tf.function graph.
-        self.w_phys = tf.Variable(0.0, dtype=tf.float32, trainable=False)
+        self.w_phys = tf.Variable(0.0, dtype=DTYPE, trainable=False)
         self.inverse = inverse
         self.loss_history = []
 
@@ -175,17 +180,17 @@ class Lorenz_PINN_solver(Lorenz):
         cols = ["x_pos", "y_pos", "z_pos"]
 
         # Data points: shape (n, 1) for time, (n, 3) for the state
-        self.t_data = tf.constant(sample[["t"]].values, dtype=tf.float32)
-        self.state_data = tf.constant(sample[cols].values, dtype=tf.float32)
+        self.t_data = tf.constant(sample[["t"]].values, dtype=DTYPE)
+        self.state_data = tf.constant(sample[cols].values, dtype=DTYPE)
 
         # Initial condition: a single point at t = 0
-        self.t_ic = tf.zeros((1, 1), dtype=tf.float32)
-        self.state_ic = tf.constant([[self.x0, self.y0, self.z0]], dtype=tf.float32)
+        self.t_ic = tf.zeros((1, 1), dtype=DTYPE)
+        self.state_ic = tf.constant([[self.x0, self.y0, self.z0]], dtype=DTYPE)
 
         # Output scaling. The network predicts roughly unit-sized numbers and we
         # map them back with mean/std. Without this, z (up to ~45) would dominate.
-        self.state_mean = tf.constant(sample[cols].mean().values.reshape(1, 3), dtype=tf.float32)
-        self.state_std = tf.constant(sample[cols].std().values.reshape(1, 3), dtype=tf.float32)
+        self.state_mean = tf.constant(sample[cols].mean().values.reshape(1, 3), dtype=DTYPE)
+        self.state_std = tf.constant(sample[cols].std().values.reshape(1, 3), dtype=DTYPE)
 
     # ------------------------------------------------------------------
     # 3. Network and physics parameters
@@ -210,9 +215,9 @@ class Lorenz_PINN_solver(Lorenz):
         if initial_params is None:
             initial_params = (self.sigma, self.rho, self.beta)
         s0, r0, b0 = initial_params
-        self.sigma_tf = tf.Variable(s0, dtype=tf.float32, trainable=self.inverse)
-        self.rho_tf = tf.Variable(r0, dtype=tf.float32, trainable=self.inverse)
-        self.beta_tf = tf.Variable(b0, dtype=tf.float32, trainable=self.inverse)
+        self.sigma_tf = tf.Variable(s0, dtype=DTYPE, trainable=self.inverse)
+        self.rho_tf = tf.Variable(r0, dtype=DTYPE, trainable=self.inverse)
+        self.beta_tf = tf.Variable(b0, dtype=DTYPE, trainable=self.inverse)
 
         self.train_vars = list(self.model.trainable_variables)
         if self.inverse:
@@ -279,7 +284,7 @@ class Lorenz_PINN_solver(Lorenz):
         loss_data = tf.reduce_mean(tf.square((pred_data - self.state_data) / self.state_std))
 
         # Physics loss: fresh random collocation times every step
-        t_colloc = tf.random.uniform((self.n_colloc, 1), 0.0, self.T, dtype=tf.float32)
+        t_colloc = tf.random.uniform((self.n_colloc, 1), 0.0, self.T, dtype=DTYPE)
         loss_phys = tf.reduce_mean(tf.square(self.physics_residual(t_colloc)))
 
         # Initial condition loss
@@ -346,7 +351,7 @@ class Lorenz_PINN_solver(Lorenz):
                              .iloc[::every]
                              .reset_index(drop=True))
 
-        t = tf.constant(ref[["t"]].values, dtype=tf.float32)
+        t = tf.constant(ref[["t"]].values, dtype=DTYPE)
         pred = self.predict_state(t).numpy()
 
         self.pred_df = ref[["t", "x_pos", "y_pos", "z_pos"]].copy()

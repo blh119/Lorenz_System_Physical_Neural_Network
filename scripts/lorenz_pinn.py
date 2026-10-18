@@ -136,10 +136,10 @@ class Lorenz:
 
 class Lorenz_PINN_solver(Lorenz):
 
-    def __init__(self, hidden_layers=4, units=64, learning_rate=1e-3,
+    def __init__(self, hidden_layers=4, units=64, learning_rate=1e-2,
                  n_colloc=2000, loss_weights=(1.0, 1.0, 10.0),
                  warmup_epochs=1000, inverse=False, seed=99,
-                 optimizer="adam", lr_final_fraction=0.01, lbfgs_iters=2000,
+                 optimizer="adam", lr_final_fraction=0.01, lbfgs_iters=20000,
                  n_colloc_lbfgs=4000, hard_ic=True, **lorenz_kwargs):
         """
         hidden_layers, units : size of the network
@@ -373,6 +373,7 @@ class Lorenz_PINN_solver(Lorenz):
 
     def train(self, epochs=10000, print_every=1000):
 
+        self.first_stage_epochs = epochs  # L-BFGS steps are numbered after these
         self.build_optimizer(epochs)
 
         for epoch in range(1, epochs + 1):
@@ -493,6 +494,10 @@ class Lorenz_PINN_solver(Lorenz):
             true = self.pred_df[f"{v}_pos"].values
             err = np.linalg.norm(self.pred_df[f"{v}_pinn"].values - true) / np.linalg.norm(true)
             print(f"relative L2 error {v}: {err:.3e}")
+
+        max_abs = np.abs(self.pred_df[["x_pinn", "y_pinn", "z_pinn"]].values
+                         - self.pred_df[["x_pos", "y_pos", "z_pos"]].values).max()
+        print(f"max absolute error (worst single point): {max_abs:.3e}")
 
         return self.pred_df
 

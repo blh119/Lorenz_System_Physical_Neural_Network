@@ -140,10 +140,10 @@ class Lorenz:
 
 class Lorenz_PINN_solver(Lorenz):
 
-    def __init__(self, hidden_layers=4, units=64, learning_rate=1e-3,
+    def __init__(self, hidden_layers=4, units=64, learning_rate=1e-2,
                  n_colloc=2000, loss_weights=(1.0, 1.0, 10.0),
                  warmup_epochs=1000, inverse=False, seed=99,
-                 optimizer="adam", lr_final_fraction=0.01, lbfgs_iters=2000,
+                 optimizer="adam", lr_final_fraction=0.01, lbfgs_iters=20000,
                  n_colloc_lbfgs=4000, hard_ic=True, **lorenz_kwargs):
         """
         hidden_layers, units : size of the network
@@ -377,6 +377,7 @@ class Lorenz_PINN_solver(Lorenz):
 
     def train(self, epochs=10000, print_every=1000):
 
+        self.first_stage_epochs = epochs  # L-BFGS steps are numbered after these
         self.build_optimizer(epochs)
 
         for epoch in range(1, epochs + 1):
@@ -498,6 +499,10 @@ class Lorenz_PINN_solver(Lorenz):
             err = np.linalg.norm(self.pred_df[f"{v}_pinn"].values - true) / np.linalg.norm(true)
             print(f"relative L2 error {v}: {err:.3e}")
 
+        max_abs = np.abs(self.pred_df[["x_pinn", "y_pinn", "z_pinn"]].values
+                         - self.pred_df[["x_pos", "y_pos", "z_pos"]].values).max()
+        print(f"max absolute error (worst single point): {max_abs:.3e}")
+
         return self.pred_df
 
     # ------------------------------------------------------------------
@@ -545,6 +550,9 @@ class Lorenz_Visuals:
         # Physics weight is 0 until warmup_epochs, ramps until 2 * warmup_epochs
         self.warmup_epochs = getattr(solver, "warmup_epochs", 0)
 
+        # Rows after this epoch number are L-BFGS steps, not Adam/SGD epochs
+        self.first_stage_epochs = getattr(solver, "first_stage_epochs", None)
+
         self.save_dir = save_dir
         if save_dir is not None:
             os.makedirs(save_dir, exist_ok=True)
@@ -583,6 +591,13 @@ class Lorenz_Visuals:
         if w and w > 0:
             ax.axvspan(1, w, color="gray", alpha=0.12, label="data only (physics off)")
             ax.axvspan(w, 2 * w, color="gray", alpha=0.06, label="physics ramping up")
+
+    def _shade_lbfgs(self, ax):
+        """Shade the L-BFGS stage, which comes after the Adam/SGD epochs."""
+        start = self.first_stage_epochs
+        end = self.loss_df["epoch"].max()
+        if start is not None and end > start:
+            ax.axvspan(start, end, color="tab:green", alpha=0.08, label="L-BFGS")
 
     # ------------------------------------------------------------------
     # 1 & 2. 3D trajectories: reference and predicted
@@ -755,6 +770,7 @@ class Lorenz_Visuals:
         s = self.solver
         fig, ax = plt.subplots(figsize=(10, 5))
         self._shade_warmup(ax)
+        self._shade_lbfgs(ax)
 
         if weighted:
             # physics weight follows the warm-up ramp, so rebuild it per epoch
@@ -773,7 +789,7 @@ class Lorenz_Visuals:
         for name, values in terms.items():
             ax.semilogy(df["epoch"], values, color=self.LOSS_COLORS[name], lw=1, alpha=0.85, label=name)
 
-        ax.set_xlabel("epoch")
+        ax.set_xlabel("epoch (Adam/SGD), then L-BFGS step")
         ax.set_ylabel("loss (log scale)")
         ax.set_title("Loss terms per epoch" + (" (weighted)" if weighted else " (unweighted)"))
         ax.grid(alpha=0.3, which="both")
@@ -808,12 +824,13 @@ class Lorenz_Visuals:
         """Total, physics, and data loss plotted only at new-minimum epochs."""
         minima = self.get_minima(start_epoch)
         fig, ax = plt.subplots(figsize=(10, 5))
+        self._shade_lbfgs(ax)
 
         for name in ["total", "physics", "data"]:
             ax.semilogy(minima["epoch"], minima[name], marker="o", ms=3, lw=1,
                         color=self.LOSS_COLORS[name], label=name)
 
-        ax.set_xlabel("epoch")
+        ax.set_xlabel("epoch (Adam/SGD), then L-BFGS step")
         ax.set_ylabel("loss (log scale)")
         self._log_labels(ax)
         ax.set_title(f"Losses at new minima of the total loss ({len(minima)} of {len(self.loss_df)} epochs)")
@@ -869,8 +886,11 @@ class Lorenz_Visuals:
 
 if __name__ == "__main__":
 
-    # Forward problem: learn the trajectory on [0, 1] from (1, 1, 1)
-    solver = Lorenz_PINN_solver(T=1.0, dt=[.001, .0001])
+    # Forward problem: learn the trajectory on [0, 1] from (1, 1, 1).
+    # Tuned settings (see results/all_results.csv): RK4 data at dt = 1e-4,
+    # Adam at learning rate 1e-2 for 10,000 epochs, then 20,000 L-BFGS steps.
+    solver = Lorenz_PINN_solver(T=1.0, dt=[.0001], method="rk4", optimizer="adam",
+                                learning_rate=1e-2, lbfgs_iters=20000)
     pred_df = solver.pinn_pipeline(dt=.0001, n_sample=200, epochs=10000)
 
     # Visuals: every plot at once (also saved to ./plots)

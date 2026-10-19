@@ -2,6 +2,11 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 
+# Use 64-bit floats everywhere (about 16 significant digits instead of 7),
+# so round-off stays far below the 1e-4 accuracy target.
+DTYPE = tf.float64
+tf.keras.backend.set_floatx("float64")  # Keras layers and weights follow this
+
 
 # make linear space function (unchanged)
 
@@ -28,8 +33,17 @@ class Lorenz:
     # PINN can read them later (it needs T for scaling and x0, y0, z0 for the IC loss).
     def __init__(self, sigma=10., beta=8/3, rho=28.,
                  dt=[.001, .0001, .00001, .000001],
-                 T=1.0, x0=1., y0=1., z0=1.):
+                 T=1.0, x0=1., y0=1., z0=1., method="rk4"):
+        """
+        method : "rk4" (default) or "euler". RK4's error shrinks like dt^4,
+                 so at dt = 1e-4 its error is far below 1e-8. Euler's
+                 error shrinks like dt and is about 3e-3 at dt = 1e-4,
+                 which is far too rough to train or grade against for 1e-4.
+        """
+        if method not in ("rk4", "euler"):
+            raise ValueError("method must be 'rk4' or 'euler'")
 
+        self.method = method
         self.sigma = sigma
         self.beta = beta
         self.rho = rho
@@ -45,6 +59,26 @@ class Lorenz:
         output_string = "Sigma: " + str(self.sigma) + "\nRho: " + str(self.rho) + "\nBeta: " + str(self.beta)
         return output_string
 
+    def derivatives(self, x, y, z):
+
+        dx = self.sigma * (y - x)
+        dy = self.rho * x - y - x * z
+        dz = x * y - self.beta * z
+        return dx, dy, dz
+
+    def rk4_step(self, x, y, z, dt):
+
+        # Four slope estimates across the step, combined in a weighted average
+        k1 = self.derivatives(x, y, z)
+        k2 = self.derivatives(x + dt / 2 * k1[0], y + dt / 2 * k1[1], z + dt / 2 * k1[2])
+        k3 = self.derivatives(x + dt / 2 * k2[0], y + dt / 2 * k2[1], z + dt / 2 * k2[2])
+        k4 = self.derivatives(x + dt * k3[0], y + dt * k3[1], z + dt * k3[2])
+
+        x += dt / 6 * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0])
+        y += dt / 6 * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1])
+        z += dt / 6 * (k1[2] + 2 * k2[2] + 2 * k3[2] + k4[2])
+        return x, y, z
+
     def get_ic_list(self, dt=1/10000):
 
         # CHANGED: round() instead of int(). 1 / 1e-5 is 99999.99999999999
@@ -59,13 +93,13 @@ class Lorenz:
 
         for i in range(N):
 
-            dx = self.sigma * (y - x)
-            dy = self.rho * x - y - x * z
-            dz = x * y - self.beta * z
-
-            x += dt * dx
-            y += dt * dy
-            z += dt * dz
+            if self.method == "rk4":
+                x, y, z = self.rk4_step(x, y, z, dt)
+            else:
+                dx, dy, dz = self.derivatives(x, y, z)
+                x += dt * dx
+                y += dt * dy
+                z += dt * dz
 
             self.x_list.append(x)
             self.y_list.append(y)
@@ -102,9 +136,11 @@ class Lorenz:
 
 class Lorenz_PINN_solver(Lorenz):
 
-    def __init__(self, hidden_layers=4, units=64, learning_rate=1e-3,
+    def __init__(self, hidden_layers=4, units=64, learning_rate=1e-2,
                  n_colloc=2000, loss_weights=(1.0, 1.0, 10.0),
-                 warmup_epochs=1000, inverse=False, seed=99, **lorenz_kwargs):
+                 warmup_epochs=1000, inverse=False, seed=99,
+                 optimizer="adam", lr_final_fraction=0.01, lbfgs_iters=20000,
+                 n_colloc_lbfgs=4000, hard_ic=True, **lorenz_kwargs):
         """
         hidden_layers, units : size of the network
         n_colloc             : physics (collocation) points drawn each epoch
@@ -112,7 +148,16 @@ class Lorenz_PINN_solver(Lorenz):
         warmup_epochs        : epochs of data-only training, after which the
                                physics weight ramps up over another warmup_epochs
         inverse              : if True, sigma / rho / beta become trainable
-        lorenz_kwargs        : anything Lorenz takes (sigma, T, dt, x0, ...)
+        optimizer            : "adam" or "sgd" (plain gradient descent)
+        lr_final_fraction    : the learning rate decays smoothly (cosine) from
+                               learning_rate to learning_rate * this by the last
+                               epoch. None keeps it constant.
+        lbfgs_iters          : L-BFGS steps after the first-stage optimizer
+                               finishes, to polish the last digits. 0 turns it off.
+        n_colloc_lbfgs       : fixed physics points used during L-BFGS
+        hard_ic              : if True, the network output is built so it equals
+                               (x0, y0, z0) at t = 0 exactly
+        lorenz_kwargs        : anything Lorenz takes (sigma, T, dt, x0, method, ...)
         """
         super().__init__(**lorenz_kwargs)
 
@@ -124,10 +169,17 @@ class Lorenz_PINN_solver(Lorenz):
         self.n_colloc = n_colloc
         self.w_data, self.w_phys_target, self.w_ic = loss_weights
         self.warmup_epochs = warmup_epochs
+        if optimizer not in ("adam", "sgd"):
+            raise ValueError("optimizer must be 'adam' or 'sgd'")
+        self.optimizer_name = optimizer
+        self.lr_final_fraction = lr_final_fraction
+        self.lbfgs_iters = lbfgs_iters
+        self.n_colloc_lbfgs = n_colloc_lbfgs
+        self.hard_ic = hard_ic
 
         # The physics weight changes during training, so it is a tf.Variable.
         # A plain Python float would get frozen into the tf.function graph.
-        self.w_phys = tf.Variable(0.0, dtype=tf.float32, trainable=False)
+        self.w_phys = tf.Variable(0.0, dtype=DTYPE, trainable=False)
         self.inverse = inverse
         self.loss_history = []
 
@@ -175,17 +227,17 @@ class Lorenz_PINN_solver(Lorenz):
         cols = ["x_pos", "y_pos", "z_pos"]
 
         # Data points: shape (n, 1) for time, (n, 3) for the state
-        self.t_data = tf.constant(sample[["t"]].values, dtype=tf.float32)
-        self.state_data = tf.constant(sample[cols].values, dtype=tf.float32)
+        self.t_data = tf.constant(sample[["t"]].values, dtype=DTYPE)
+        self.state_data = tf.constant(sample[cols].values, dtype=DTYPE)
 
         # Initial condition: a single point at t = 0
-        self.t_ic = tf.zeros((1, 1), dtype=tf.float32)
-        self.state_ic = tf.constant([[self.x0, self.y0, self.z0]], dtype=tf.float32)
+        self.t_ic = tf.zeros((1, 1), dtype=DTYPE)
+        self.state_ic = tf.constant([[self.x0, self.y0, self.z0]], dtype=DTYPE)
 
         # Output scaling. The network predicts roughly unit-sized numbers and we
         # map them back with mean/std. Without this, z (up to ~45) would dominate.
-        self.state_mean = tf.constant(sample[cols].mean().values.reshape(1, 3), dtype=tf.float32)
-        self.state_std = tf.constant(sample[cols].std().values.reshape(1, 3), dtype=tf.float32)
+        self.state_mean = tf.constant(sample[cols].mean().values.reshape(1, 3), dtype=DTYPE)
+        self.state_std = tf.constant(sample[cols].std().values.reshape(1, 3), dtype=DTYPE)
 
     # ------------------------------------------------------------------
     # 3. Network and physics parameters
@@ -210,19 +262,14 @@ class Lorenz_PINN_solver(Lorenz):
         if initial_params is None:
             initial_params = (self.sigma, self.rho, self.beta)
         s0, r0, b0 = initial_params
-        self.sigma_tf = tf.Variable(s0, dtype=tf.float32, trainable=self.inverse)
-        self.rho_tf = tf.Variable(r0, dtype=tf.float32, trainable=self.inverse)
-        self.beta_tf = tf.Variable(b0, dtype=tf.float32, trainable=self.inverse)
+        self.sigma_tf = tf.Variable(s0, dtype=DTYPE, trainable=self.inverse)
+        self.rho_tf = tf.Variable(r0, dtype=DTYPE, trainable=self.inverse)
+        self.beta_tf = tf.Variable(b0, dtype=DTYPE, trainable=self.inverse)
 
         self.train_vars = list(self.model.trainable_variables)
         if self.inverse:
             self.train_vars += [self.sigma_tf, self.rho_tf, self.beta_tf]
 
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=self.learning_rate)
-
-        # Wrap the train step in tf.function here, after the data is prepared,
-        # so the compiled graph uses this run's tensors.
-        self.train_step = tf.function(self._train_step)
 
     def predict_state(self, t):
         """Physical time in, physical (x, y, z) out.
@@ -233,6 +280,11 @@ class Lorenz_PINN_solver(Lorenz):
         """
         t_norm = 2.0 * t / self.T - 1.0  # [0, T] -> [-1, 1]
         out = self.model(t_norm)
+
+        if self.hard_ic:
+            # (t / T) is 0 at t = 0, so the output is exactly the initial
+            # condition there no matter what the network's weights are.
+            return self.state_ic + (t / self.T) * out * self.state_std
         return out * self.state_std + self.state_mean
 
     # ------------------------------------------------------------------
@@ -272,14 +324,16 @@ class Lorenz_PINN_solver(Lorenz):
     # 5. Loss and training
     # ------------------------------------------------------------------
 
-    def compute_loss(self):
+    def compute_loss(self, t_colloc=None):
 
-        # Data loss: match the sampled Euler points
+        # Data loss: match the sampled reference points
         pred_data = self.predict_state(self.t_data)
         loss_data = tf.reduce_mean(tf.square((pred_data - self.state_data) / self.state_std))
 
         # Physics loss: fresh random collocation times every step
-        t_colloc = tf.random.uniform((self.n_colloc, 1), 0.0, self.T, dtype=tf.float32)
+        # (L-BFGS passes in a fixed set, since it needs the same loss each call)
+        if t_colloc is None:
+            t_colloc = tf.random.uniform((self.n_colloc, 1), 0.0, self.T, dtype=DTYPE)
         loss_phys = tf.reduce_mean(tf.square(self.physics_residual(t_colloc)))
 
         # Initial condition loss
@@ -300,7 +354,27 @@ class Lorenz_PINN_solver(Lorenz):
         self.optimizer.apply_gradients(zip(grads, self.train_vars))
         return total, loss_data, loss_phys, loss_ic
 
+    def build_optimizer(self, epochs):
+
+        lr = self.learning_rate
+        if self.lr_final_fraction is not None:
+            # Big steps early to find the right region, small steps late to settle in
+            lr = tf.keras.optimizers.schedules.CosineDecay(
+                self.learning_rate, decay_steps=epochs, alpha=self.lr_final_fraction)
+
+        if self.optimizer_name == "sgd":
+            self.optimizer = tf.keras.optimizers.SGD(learning_rate=lr)
+        else:
+            self.optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+
+        # Wrap the train step in tf.function after the optimizer exists,
+        # so the compiled graph uses this run's optimizer and tensors.
+        self.train_step = tf.function(self._train_step)
+
     def train(self, epochs=10000, print_every=1000):
+
+        self.first_stage_epochs = epochs  # L-BFGS steps are numbered after these
+        self.build_optimizer(epochs)
 
         for epoch in range(1, epochs + 1):
 
@@ -331,14 +405,75 @@ class Lorenz_PINN_solver(Lorenz):
                     msg += f" | sigma {record['sigma']:.3f} rho {record['rho']:.3f} beta {record['beta']:.3f}"
                 print(msg)
 
+        if self.lbfgs_iters > 0:
+            self.train_lbfgs(start_epoch=epochs, print_every=print_every)
+
         self.loss_df = pd.DataFrame(self.loss_history)
 
+    def train_lbfgs(self, start_epoch=0, print_every=1000):
+        """Second training stage with L-BFGS (via scipy).
+
+        L-BFGS uses the curvature of the loss, not just its slope, so near a
+        minimum it takes much better steps than Adam or plain gradient descent.
+        It needs the exact same loss on every call, so the physics points are
+        fixed (an evenly spaced grid) instead of re-drawn each step.
+        """
+        from scipy.optimize import minimize
+
+        self.w_phys.assign(self.w_phys_target)
+        t_colloc = tf.reshape(tf.linspace(tf.constant(0.0, DTYPE), self.T, self.n_colloc_lbfgs), (-1, 1))
+        shapes = [v.shape for v in self.train_vars]
+        sizes = [int(np.prod(sh)) for sh in shapes]
+
+        def set_weights(flat):
+            parts = tf.split(tf.constant(flat, dtype=DTYPE), sizes)
+            for v, part, sh in zip(self.train_vars, parts, shapes):
+                v.assign(tf.reshape(part, sh))
+
+        @tf.function
+        def loss_and_grad():
+            with tf.GradientTape() as tape:
+                losses = self.compute_loss(t_colloc)
+            grads = tape.gradient(losses[0], self.train_vars)
+            flat = tf.concat([tf.reshape(g, [-1]) for g in grads], axis=0)
+            return losses, flat
+
+        last = {}
+
+        def fun(flat):
+            set_weights(flat)
+            losses, grad = loss_and_grad()
+            last["losses"] = [float(l) for l in losses]
+            return last["losses"][0], grad.numpy()
+
+        step = [start_epoch]
+
+        def callback(_):
+            step[0] += 1
+            total, l_data, l_phys, l_ic = last["losses"]
+            record = {"epoch": step[0], "total": total, "data": l_data,
+                      "physics": l_phys, "ic": l_ic}
+            if self.inverse:
+                record.update({"sigma": float(self.sigma_tf), "rho": float(self.rho_tf),
+                               "beta": float(self.beta_tf)})
+            self.loss_history.append(record)
+            if (step[0] - start_epoch) % print_every == 0:
+                print(f"lbfgs {step[0] - start_epoch:6d} | total {total:.3e} | data {l_data:.3e}"
+                      f" | physics {l_phys:.3e} | ic {l_ic:.3e}")
+
+        x0 = tf.concat([tf.reshape(v, [-1]) for v in self.train_vars], axis=0).numpy()
+        result = minimize(fun, x0, jac=True, method="L-BFGS-B", callback=callback,
+                          options={"maxiter": self.lbfgs_iters, "maxcor": 50,
+                                   "ftol": 1e-16, "gtol": 1e-12})
+        set_weights(result.x)
+        print(f"L-BFGS stopped after {result.nit} steps: {result.message}")
+
     # ------------------------------------------------------------------
-    # 6. Predict and compare with the full Euler trajectory
+    # 6. Predict and compare with the full reference trajectory
     # ------------------------------------------------------------------
 
     def predict(self, every=1):
-        """Evaluate the PINN at the times of the full Euler run it was trained on.
+        """Evaluate the PINN at the times of the full reference run it was trained on.
 
         every : keep every k-th row (useful for dt = 1e-6, which has a million rows).
         """
@@ -346,7 +481,7 @@ class Lorenz_PINN_solver(Lorenz):
                              .iloc[::every]
                              .reset_index(drop=True))
 
-        t = tf.constant(ref[["t"]].values, dtype=tf.float32)
+        t = tf.constant(ref[["t"]].values, dtype=DTYPE)
         pred = self.predict_state(t).numpy()
 
         self.pred_df = ref[["t", "x_pos", "y_pos", "z_pos"]].copy()
@@ -354,11 +489,15 @@ class Lorenz_PINN_solver(Lorenz):
         self.pred_df["y_pinn"] = pred[:, 1]
         self.pred_df["z_pinn"] = pred[:, 2]
 
-        # Relative L2 error per variable: ||pinn - euler|| / ||euler||
+        # Relative L2 error per variable: ||pinn - reference|| / ||reference||
         for v in ["x", "y", "z"]:
             true = self.pred_df[f"{v}_pos"].values
             err = np.linalg.norm(self.pred_df[f"{v}_pinn"].values - true) / np.linalg.norm(true)
             print(f"relative L2 error {v}: {err:.3e}")
+
+        max_abs = np.abs(self.pred_df[["x_pinn", "y_pinn", "z_pinn"]].values
+                         - self.pred_df[["x_pos", "y_pos", "z_pos"]].values).max()
+        print(f"max absolute error (worst single point): {max_abs:.3e}")
 
         return self.pred_df
 

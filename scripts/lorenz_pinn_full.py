@@ -493,15 +493,29 @@ class Lorenz_PINN_solver(Lorenz):
         self.pred_df["y_pinn"] = pred[:, 1]
         self.pred_df["z_pinn"] = pred[:, 2]
 
+        # Error at each time point: PINN minus reference (signed)
+        for v in ["x", "y", "z"]:
+            self.pred_df[f"{v}_err"] = self.pred_df[f"{v}_pinn"] - self.pred_df[f"{v}_pos"]
+
+        # Combined error: straight-line distance between the PINN's point and
+        # the reference point in (x, y, z) space, sqrt(x_err^2 + y_err^2 + z_err^2)
+        self.pred_df["err_3d"] = np.sqrt(self.pred_df["x_err"] ** 2
+                                         + self.pred_df["y_err"] ** 2
+                                         + self.pred_df["z_err"] ** 2)
+
         # Relative L2 error per variable: ||pinn - reference|| / ||reference||
         for v in ["x", "y", "z"]:
-            true = self.pred_df[f"{v}_pos"].values
-            err = np.linalg.norm(self.pred_df[f"{v}_pinn"].values - true) / np.linalg.norm(true)
+            err = np.linalg.norm(self.pred_df[f"{v}_err"]) / np.linalg.norm(self.pred_df[f"{v}_pos"])
             print(f"relative L2 error {v}: {err:.3e}")
 
-        max_abs = np.abs(self.pred_df[["x_pinn", "y_pinn", "z_pinn"]].values
-                         - self.pred_df[["x_pos", "y_pos", "z_pos"]].values).max()
+        # Same idea for all three together: total error size / total trajectory size
+        ref_3d = np.sqrt((self.pred_df[["x_pos", "y_pos", "z_pos"]] ** 2).sum(axis=1))
+        print(f"relative L2 error (x, y, z combined): "
+              f"{np.linalg.norm(self.pred_df['err_3d']) / np.linalg.norm(ref_3d):.3e}")
+
+        max_abs = self.pred_df[["x_err", "y_err", "z_err"]].abs().values.max()
         print(f"max absolute error (worst single point): {max_abs:.3e}")
+        print(f"max 3D distance error: {self.pred_df['err_3d'].max():.3e}")
 
         return self.pred_df
 

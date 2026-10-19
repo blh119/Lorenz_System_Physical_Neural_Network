@@ -888,7 +888,8 @@ if __name__ == "__main__":
 
     # Forward problem: learn the trajectory on [0, 1] from (1, 1, 1).
     # Tuned settings (see results/all_results.csv): RK4 data at dt = 1e-4,
-    # Adam at learning rate 1e-2 for 10,000 epochs, then 20,000 L-BFGS steps.
+    # Adam at learning rate 1e-2 for 10,000 epochs, then up to 20,000 L-BFGS steps
+    # (scipy stops at 15,000 loss evaluations, which was about 13,800 steps here).
     solver = Lorenz_PINN_solver(T=1.0, dt=[.0001], method="rk4", optimizer="adam",
                                 learning_rate=1e-2, lbfgs_iters=20000)
     pred_df = solver.pinn_pipeline(dt=.0001, n_sample=200, epochs=10000)

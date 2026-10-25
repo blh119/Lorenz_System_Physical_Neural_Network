@@ -19,6 +19,9 @@ Quick start (from the scripts/ folder):
     python interval_validation.py --sweep single --out runs/single
     python interval_validation.py --sweep multi --out runs/multi
 
+    # sweep plots (heatmaps, error vs length, error vs number of intervals)
+    python interval_validation.py --plot runs/single/results.csv runs/multi/results.csv --out runs/plots
+
 Or from Python:
 
     from interval_validation import Interval_Validation_Runs, make_intervals, sweep_configs
@@ -26,6 +29,8 @@ Or from Python:
     runs.run("three_pieces", make_intervals(3, 0.45), physics_on="full")
     runs.run_all(sweep_configs("single"))
     runs.results_df   # pandas DataFrame, also saved as runs/mine/results.csv
+    Interval_Validation_Visuals(solver=runs.last_solver, save_dir="plots").plot_run_all()
+    Interval_Validation_Visuals(results_df=runs.results_df, save_dir="plots").plot_sweep_all()
 """
 
 import argparse
@@ -220,28 +225,6 @@ class Lorenz_Interval_Validation(Lorenz_PINN_solver):
         row["lbfgs_steps"] = len(self.loss_history) - self.first_stage_epochs
         return row
 
-    # -------- plot --------
-
-    def plot_errors(self, save_path=None, title=None):
-        """|PINN - reference| over time with the training intervals shaded."""
-        df = self.pred_df
-        fig, ax = plt.subplots(figsize=(10, 4.5))
-        for i, (a, b) in enumerate(self.train_intervals):
-            ax.axvspan(a, b, color="tab:green", alpha=0.12, label="training data" if i == 0 else None)
-        for v, c in zip("xyz", ["tab:blue", "tab:orange", "tab:green"]):
-            ax.semilogy(df["t"], np.maximum(df[f"{v}_err"].abs(), 1e-12), color=c, lw=1, label=f"|{v} error|")
-        ax.axhline(1e-4, color="black", ls="--", lw=0.8, label="1e-4")
-        ax.set_xlabel("t")
-        ax.set_ylabel("absolute error (log scale)")
-        ax.set_title(title or f"Train on {self.summary()['intervals']} (physics on {self.physics_on})")
-        ax.grid(alpha=0.3, which="both")
-        ax.legend(fontsize=8, loc="lower right")
-        fig.tight_layout()
-        if save_path:
-            fig.savefig(save_path, dpi=130, bbox_inches="tight")
-        plt.close(fig)
-        return fig
-
 
 # ----------------------------------------------------------------------
 # Running one or many configurations
@@ -259,7 +242,8 @@ def run_one(intervals, physics_on="train", epochs=TUNED_EPOCHS, lbfgs_iters=None
     row = v.summary()
     row.update(seed=seed, epochs=epochs, seconds=round(time.time() - start))
     if plot_path:
-        v.plot_errors(save_path=plot_path)
+        Interval_Validation_Visuals(solver=v).plot_errors(save_path=plot_path)
+        plt.close("all")
     return row, v
 
 
@@ -310,6 +294,7 @@ class Interval_Validation_Runs:
         self.run_kwargs = run_kwargs  # epochs, lbfgs_iters, seed, T, ...
         os.makedirs(out_dir, exist_ok=True)
         self.results_df = pd.read_csv(self.csv_path) if os.path.exists(self.csv_path) else pd.DataFrame()
+        self.last_solver = None  # the most recently trained model, for plotting
 
     def done(self, name):
         return not self.results_df.empty and name in set(self.results_df["name"])
@@ -323,6 +308,7 @@ class Interval_Validation_Runs:
         print(f"\n=== {name}: {intervals}, physics on {physics_on} ===")
         plot = os.path.join(self.out_dir, f"{name}.png") if self.save_plots else None
         row, solver = run_one(intervals, physics_on, plot_path=plot, **{**self.run_kwargs, **overrides})
+        self.last_solver = solver
         if self.save_predictions:
             solver.pred_df.to_csv(os.path.join(self.out_dir, f"{name}_predictions.csv"), index=False)
 
@@ -340,6 +326,254 @@ class Interval_Validation_Runs:
 
     def to_csv(self, path=None):
         self.results_df.to_csv(path or self.csv_path, index=False)
+
+
+class Interval_Validation_Visuals:
+    """Plots for train-interval validation.
+
+    Two kinds of input, either or both:
+        solver     : a trained Lorenz_Interval_Validation (after predict), for
+                     plots of one run: where it trained and how the error
+                     behaves inside and outside those intervals
+        results_df : the table of many runs (Interval_Validation_Runs.results_df,
+                     or results.csv files via from_csv), for sweep plots
+
+        vis = Interval_Validation_Visuals(solver=v, save_dir="plots")
+        vis.plot_run_all()
+        vis = Interval_Validation_Visuals.from_csv("runs/single/results.csv", "runs/multi/results.csv")
+        vis.plot_location_length_heatmap(physics_on="full")
+
+    Every plot method returns its figure and saves it if you pass save_path.
+    """
+
+    VARS = ["x", "y", "z"]
+    COLORS = {"x": "tab:blue", "y": "tab:orange", "z": "tab:green"}
+    MODE_COLORS = {"train": "tab:purple", "full": "tab:blue"}
+    MODE_LABELS = {"train": "physics on training intervals only", "full": "physics on all of [0, T]"}
+    TRAIN_SHADE = dict(color="tab:green", alpha=0.12)
+    METRIC_LABELS = {"held_out_rel_l2": "held-out relative L2 error",
+                     "held_out_max_abs": "held-out worst-point error",
+                     "full_rel_l2": "relative L2 error on all of [0, T]",
+                     "full_max_abs": "worst-point error on all of [0, T]",
+                     "beyond_rel_l2": "relative L2 error beyond the intervals",
+                     "gaps_rel_l2": "relative L2 error in the gaps",
+                     "train_rel_l2": "relative L2 error on the training intervals"}
+
+    def __init__(self, solver=None, results_df=None, save_dir=None):
+        if solver is not None and not hasattr(solver, "pred_df"):
+            raise ValueError("Run solver.predict() (or pinn_pipeline) before making visuals.")
+        self.solver = solver
+        self.results_df = results_df
+        self.save_dir = save_dir
+        if save_dir is not None:
+            os.makedirs(save_dir, exist_ok=True)
+
+    @classmethod
+    def from_csv(cls, *paths, save_dir=None):
+        """Load and stack one or more results.csv files."""
+        return cls(results_df=pd.concat([pd.read_csv(p) for p in paths], ignore_index=True),
+                   save_dir=save_dir)
+
+    # -------- helpers --------
+
+    def _save(self, fig, save_path):
+        if save_path is None:
+            return
+        if self.save_dir is not None and not os.path.isabs(save_path):
+            save_path = os.path.join(self.save_dir, save_path)
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+
+    def _shade(self, ax, label=True):
+        for i, (a, b) in enumerate(self.solver.train_intervals):
+            ax.axvspan(a, b, **self.TRAIN_SHADE, label="training data" if label and i == 0 else None)
+
+    def _need(self, what):
+        if what == "solver" and self.solver is None:
+            raise ValueError("This plot needs a trained solver: Interval_Validation_Visuals(solver=...)")
+        if what == "results" and self.results_df is None:
+            raise ValueError("This plot needs results: Interval_Validation_Visuals(results_df=...) or from_csv")
+
+    def _title(self):
+        s = self.solver
+        iv = ", ".join(f"[{a:g}, {b:g}]" for a, b in s.train_intervals)
+        return f"Trained on {iv} ({self.MODE_LABELS[s.physics_on]})"
+
+    # -------- one run --------
+
+    def plot_errors(self, save_path=None):
+        """|PINN - reference| over time, log scale, training intervals shaded."""
+        self._need("solver")
+        df = self.solver.pred_df
+        fig, ax = plt.subplots(figsize=(10, 4.5))
+        self._shade(ax)
+        for v in self.VARS:
+            ax.semilogy(df["t"], np.maximum(df[f"{v}_err"].abs(), 1e-12), color=self.COLORS[v],
+                        lw=1, label=f"|{v} error|")
+        ax.axhline(1e-4, color="black", ls="--", lw=0.8, label="1e-4 target")
+        ax.set_xlabel("t")
+        ax.set_ylabel("absolute error (log scale)")
+        ax.set_title(self._title(), fontsize=10)
+        ax.grid(alpha=0.3, which="both")
+        ax.legend(fontsize=8, loc="lower right")
+        fig.tight_layout()
+        self._save(fig, save_path)
+        return fig
+
+    def plot_time_series(self, save_path=None):
+        """x(t), y(t), z(t): PINN vs reference, training intervals shaded."""
+        self._need("solver")
+        df, s = self.solver.pred_df, self.solver
+        samples = s.sample_list[s.dt_list.index(s.train_dt)]
+        fig, axes = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
+        for ax, v in zip(axes, self.VARS):
+            self._shade(ax, label=(v == "x"))
+            ax.plot(df["t"], df[f"{v}_pos"], color="black", lw=1.5, label="reference")
+            ax.plot(df["t"], df[f"{v}_pinn"], color=self.COLORS[v], lw=1.5, ls="--", label="PINN")
+            ax.scatter(samples["t"], samples[f"{v}_pos"], color="tab:red", s=8, zorder=3,
+                       label="training samples" if v == "x" else None)
+            ax.set_ylabel(v)
+            ax.grid(alpha=0.3)
+        axes[0].legend(loc="upper right", fontsize=8)
+        axes[0].set_title(self._title(), fontsize=10)
+        axes[-1].set_xlabel("t")
+        fig.tight_layout()
+        self._save(fig, save_path)
+        return fig
+
+    def plot_3d(self, save_path=None):
+        """Reference path in gray; PINN path in green where it had data, red where it did not."""
+        self._need("solver")
+        df = self.solver.pred_df
+        train = self.solver.in_train(df["t"].values)
+        fig = plt.figure(figsize=(7, 6))
+        ax = fig.add_subplot(projection="3d")
+        ax.plot(df["x_pos"], df["y_pos"], df["z_pos"], color="gray", lw=1, alpha=0.6, label="reference")
+        for mask, color, label in [(train, "tab:green", "PINN, training intervals"),
+                                   (~train, "tab:red", "PINN, held out")]:
+            # NaN outside the mask breaks the line there instead of joining across gaps
+            part = df[["x_pinn", "y_pinn", "z_pinn"]].where(pd.Series(mask, index=df.index), axis=0)
+            ax.plot(part["x_pinn"], part["y_pinn"], part["z_pinn"], color=color, lw=1.4, label=label)
+        ax.set_xlabel("x"); ax.set_ylabel("y"); ax.set_zlabel("z")
+        ax.set_title(self._title(), fontsize=9)
+        ax.legend(loc="upper left", fontsize=8)
+        self._save(fig, save_path)
+        return fig
+
+    def plot_run_all(self, show=False):
+        """Every one-run plot (saved too if save_dir was given)."""
+        save = self.save_dir is not None
+        figs = {"errors": self.plot_errors("errors.png" if save else None),
+                "time_series": self.plot_time_series("time_series.png" if save else None),
+                "trajectory_3d": self.plot_3d("trajectory_3d.png" if save else None)}
+        if show:
+            plt.show()
+        return figs
+
+    # -------- many runs --------
+
+    def plot_location_length_heatmap(self, metric="held_out_rel_l2", physics_on="full", save_path=None):
+        """Single-interval runs: interval start (columns) x length (rows), colored by error.
+
+        Darker = larger error, log color scale. Each cell is labeled with its value.
+        """
+        self._need("results")
+        from matplotlib.colors import LogNorm
+        df = self.results_df[(self.results_df["n_intervals"] == 1) & (self.results_df["physics_on"] == physics_on)]
+        grid = df.pivot_table(index="train_length", columns="first_start", values=metric)
+        fig, ax = plt.subplots(figsize=(7, 4.8))
+        vals = grid.values
+        cmap = plt.get_cmap("Blues").copy()
+        cmap.set_bad("#eeeeee")  # combinations that don't fit in [0, T] or weren't run
+        im = ax.imshow(np.ma.masked_invalid(vals), cmap=cmap, norm=LogNorm(np.nanmin(vals), np.nanmax(vals)),
+                       origin="lower", aspect="auto")
+        ax.set_xticks(range(len(grid.columns)), [f"{c:g}" for c in grid.columns])
+        ax.set_yticks(range(len(grid.index)), [f"{r:g}" for r in grid.index])
+        mid = np.sqrt(np.nanmin(vals) * np.nanmax(vals))
+        for i in range(vals.shape[0]):
+            for j in range(vals.shape[1]):
+                if not np.isfinite(vals[i, j]):
+                    ax.text(j, i, "not run", ha="center", va="center", fontsize=8, color="gray")
+                else:
+                    ax.text(j, i, f"{vals[i, j]:.1e}", ha="center", va="center", fontsize=9,
+                            color="white" if vals[i, j] > mid else "black")
+        ax.set_xlabel("interval start time")
+        ax.set_ylabel("interval length")
+        ax.set_title(f"{self.METRIC_LABELS.get(metric, metric)}\n{self.MODE_LABELS[physics_on]}", fontsize=10)
+        fig.colorbar(im, ax=ax, label=metric)
+        fig.tight_layout()
+        self._save(fig, save_path)
+        return fig
+
+    def plot_error_vs_length(self, metric="held_out_rel_l2", save_path=None):
+        """Every run: error against total training length. Circles = one interval, squares = several."""
+        self._need("results")
+        df = self.results_df
+        fig, ax = plt.subplots(figsize=(8, 4.8))
+        for mode, color in self.MODE_COLORS.items():
+            for single, marker in [(True, "o"), (False, "s")]:
+                part = df[(df["physics_on"] == mode) & ((df["n_intervals"] == 1) == single)]
+                if len(part):
+                    ax.scatter(part["train_length"], part[metric], color=color, marker=marker, s=40,
+                               edgecolor="white", linewidth=1, zorder=3,
+                               label=f"{self.MODE_LABELS[mode]}, {'one interval' if single else 'several'}")
+        ax.set_yscale("log")
+        ax.axhline(1e-4, color="black", ls="--", lw=0.8, label="1e-4 target")
+        ax.set_xlabel("total training length (out of T)")
+        ax.set_ylabel(self.METRIC_LABELS.get(metric, metric) + " (log)")
+        ax.grid(alpha=0.3, which="both")
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+        self._save(fig, save_path)
+        return fig
+
+    def plot_interval_count(self, metric="held_out_rel_l2", physics_on="full", save_path=None):
+        """Error against the number of intervals, one line per total length and placement.
+
+        n = 1 points come from the single-interval runs starting at t = 0.
+        """
+        self._need("results")
+        df = self.results_df[self.results_df["physics_on"] == physics_on].copy()
+        names = df["name"].astype(str)
+        df["placement"] = np.where(names.str.contains("_front_"), "packed near t = 0", "spread over [0, T]")
+        fig, ax = plt.subplots(figsize=(8, 4.8))
+        colors = ["tab:blue", "tab:orange", "tab:green", "tab:red"]
+        k = 0
+        for total in sorted(df.loc[df["n_intervals"] > 1, "train_length"].round(6).unique()):
+            one = df[(df["n_intervals"] == 1) & np.isclose(df["train_length"], total) & (df["first_start"] == 0)]
+            for placement, ls in [("spread over [0, T]", "-"), ("packed near t = 0", "--")]:
+                part = df[(df["n_intervals"] > 1) & np.isclose(df["train_length"], total)
+                          & (df["placement"] == placement)]
+                part = pd.concat([one, part]).sort_values("n_intervals")
+                if len(part) > 1:
+                    ax.plot(part["n_intervals"], part[metric], ls=ls, lw=2, marker="o", ms=8,
+                            color=colors[k % len(colors)], label=f"total {total:g}, {placement}")
+                    k += 1
+        ax.set_yscale("log")
+        ax.axhline(1e-4, color="black", ls=":", lw=0.8, label="1e-4 target")
+        ax.set_xlabel("number of training intervals")
+        ax.set_ylabel(self.METRIC_LABELS.get(metric, metric) + " (log)")
+        ax.set_title(self.MODE_LABELS[physics_on], fontsize=10)
+        ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+        ax.grid(alpha=0.3, which="both")
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+        self._save(fig, save_path)
+        return fig
+
+    def plot_sweep_all(self, metric="held_out_rel_l2", show=False):
+        """Every sweep plot for both physics modes (saved too if save_dir was given)."""
+        save = self.save_dir is not None
+        figs = {"error_vs_length": self.plot_error_vs_length(metric, "error_vs_length.png" if save else None)}
+        for mode in self.results_df["physics_on"].unique():
+            if ((self.results_df["physics_on"] == mode) & (self.results_df["n_intervals"] == 1)).any():
+                figs[f"heatmap_{mode}"] = self.plot_location_length_heatmap(
+                    metric, mode, f"heatmap_{mode}.png" if save else None)
+            if ((self.results_df["physics_on"] == mode) & (self.results_df["n_intervals"] > 1)).any():
+                figs[f"interval_count_{mode}"] = self.plot_interval_count(
+                    metric, mode, f"interval_count_{mode}.png" if save else None)
+        if show:
+            plt.show()
+        return figs
 
 
 if __name__ == "__main__":
@@ -360,13 +594,18 @@ if __name__ == "__main__":
     p.add_argument("--seed", type=int, default=99)
     p.add_argument("--out", default="interval_runs", help="folder for results.csv and plots")
     p.add_argument("--name", help="name for a single run's row in results.csv")
+    p.add_argument("--plot", nargs="+", metavar="CSV",
+                   help="only make the sweep plots from these results.csv files (into --out)")
     p.add_argument("--save-predictions", action="store_true",
                    help="also save each run's full prediction table (t, reference, PINN, errors)")
     args = p.parse_args()
 
     run_kwargs = dict(epochs=args.epochs, lbfgs_iters=args.lbfgs, seed=args.seed, T=args.T)
 
-    if args.sweep:
+    if args.plot:
+        Interval_Validation_Visuals.from_csv(*args.plot, save_dir=args.out).plot_sweep_all()
+        print(f"plots saved to {args.out}")
+    elif args.sweep:
         configs = [c for c in sweep_configs(args.sweep, args.T) if not args.only or args.only in c[0]]
         if args.shard:
             i, n = map(int, args.shard.split("/"))
@@ -384,6 +623,9 @@ if __name__ == "__main__":
         name = args.name or "run_" + "_".join(f"{a:g}-{b:g}" for a, b in intervals) + f"_{args.physics_on}"
         runs = Interval_Validation_Runs(args.out, save_predictions=args.save_predictions, **run_kwargs)
         row = runs.run(name, intervals, args.physics_on)
+        if runs.last_solver is not None:
+            Interval_Validation_Visuals(solver=runs.last_solver,
+                                        save_dir=os.path.join(args.out, name)).plot_run_all()
         for k, val in row.items():
             print(f"{k:>18}: {val}")
         print(f"saved to {runs.csv_path}")

@@ -128,12 +128,22 @@ class Lorenz_Interval_Validation(Lorenz_PINN_solver):
                               inside the intervals. The ODE itself is free to
                               enforce anywhere, so this tests how far the
                               physics can carry the solution past the data.
+    scale_from      : where the output scaling (mean and spread of x, y, z) comes from.
+                      "reference" (default) uses the whole reference path on [0, T],
+                      the same three numbers the tuned model used. "train" uses only
+                      the training samples; on a short interval the spread is tiny,
+                      which blows up the scaled residual and stalls training, so
+                      that option mostly measures a scaling problem, not extrapolation.
     The initial condition at t = 0 is always known (hard_ic), as in the base solver.
     Everything else is passed through to Lorenz_PINN_solver / Lorenz.
     """
 
-    def __init__(self, train_intervals=((0.0, 0.5),), physics_on="train", **solver_kwargs):
+    def __init__(self, train_intervals=((0.0, 0.5),), physics_on="train", scale_from="reference",
+                 **solver_kwargs):
         super().__init__(**solver_kwargs)
+        if scale_from not in ("reference", "train"):
+            raise ValueError("scale_from must be 'reference' or 'train'")
+        self.scale_from = scale_from
         if physics_on not in ("train", "full"):
             raise ValueError("physics_on must be 'train' or 'full'")
         self.physics_on = physics_on
@@ -157,6 +167,13 @@ class Lorenz_Interval_Validation(Lorenz_PINN_solver):
         for a, b in self.train_intervals:
             mask |= (t >= a) & (t <= b)
         return mask
+
+    def prepare_training_data(self, dt=.0001):
+        super().prepare_training_data(dt)
+        if self.scale_from == "reference":
+            ref = self.lorenz_df.loc[self.lorenz_df["dt"] == dt, ["x_pos", "y_pos", "z_pos"]]
+            self.state_mean = tf.constant(ref.mean().values.reshape(1, 3), dtype=DTYPE)
+            self.state_std = tf.constant(ref.std().values.reshape(1, 3), dtype=DTYPE)
 
     # -------- data: stratified sample inside each interval --------
 
@@ -216,7 +233,7 @@ class Lorenz_Interval_Validation(Lorenz_PINN_solver):
                "n_intervals": len(self.train_intervals),
                "train_length": round(self.train_length, 10),
                "first_start": first, "last_end": last,
-               "physics_on": self.physics_on,
+               "physics_on": self.physics_on, "scale_from": self.scale_from,
                "n_data": len(self.sample_list[self.dt_list.index(self.train_dt)])}
         for name, mask in [("train", train), ("held_out", ~train), ("gaps", ~train & inside_hull),
                            ("beyond", ~train & ~inside_hull), ("full", np.ones_like(train))]:
@@ -231,13 +248,15 @@ class Lorenz_Interval_Validation(Lorenz_PINN_solver):
 # ----------------------------------------------------------------------
 
 def run_one(intervals, physics_on="train", epochs=TUNED_EPOCHS, lbfgs_iters=None,
-            n_sample=TUNED_N_SAMPLE, seed=99, plot_path=None, print_every=5000, T=1.0):
+            n_sample=TUNED_N_SAMPLE, seed=99, plot_path=None, print_every=5000, T=1.0,
+            scale_from="reference"):
     """Train one validation model with the tuned settings and return its summary row."""
     kwargs = dict(TUNED, T=T, seed=seed)
     if lbfgs_iters is not None:
         kwargs["lbfgs_iters"] = lbfgs_iters
     start = time.time()
-    v = Lorenz_Interval_Validation(train_intervals=intervals, physics_on=physics_on, **kwargs)
+    v = Lorenz_Interval_Validation(train_intervals=intervals, physics_on=physics_on,
+                                   scale_from=scale_from, **kwargs)
     v.pinn_pipeline(dt=kwargs["dt"][0], n_sample=n_sample, epochs=epochs, print_every=print_every)
     row = v.summary()
     row.update(seed=seed, epochs=epochs, seconds=round(time.time() - start))
@@ -286,12 +305,16 @@ class Interval_Validation_Runs:
     """
 
     def __init__(self, out_dir="interval_runs", csv_name="results.csv",
-                 save_plots=True, save_predictions=False, **run_kwargs):
+                 save_plots=True, save_predictions=False, claim=False, **run_kwargs):
         self.out_dir = out_dir
         self.csv_path = os.path.join(out_dir, csv_name)
         self.save_plots = save_plots
         self.save_predictions = save_predictions
         self.run_kwargs = run_kwargs  # epochs, lbfgs_iters, seed, T, ...
+        # claim=True: several processes can share one out_dir (each with its own
+        # csv_name). A run is skipped if another process already left a
+        # <name>.claim file; delete those files to re-run.
+        self.claim = claim
         os.makedirs(out_dir, exist_ok=True)
         self.results_df = pd.read_csv(self.csv_path) if os.path.exists(self.csv_path) else pd.DataFrame()
         self.last_solver = None  # the most recently trained model, for plotting
@@ -304,6 +327,12 @@ class Interval_Validation_Runs:
         if self.done(name):
             print(f"skipping {name}: already in {self.csv_path}")
             return self.results_df[self.results_df["name"] == name].iloc[0].to_dict()
+
+        if self.claim:
+            try:
+                os.close(os.open(os.path.join(self.out_dir, f"{name}.claim"), os.O_CREAT | os.O_EXCL))
+            except FileExistsError:
+                return None
 
         print(f"\n=== {name}: {intervals}, physics on {physics_on} ===")
         plot = os.path.join(self.out_dir, f"{name}.png") if self.save_plots else None
@@ -587,11 +616,15 @@ if __name__ == "__main__":
     p.add_argument("--physics-on", default="train", choices=["train", "full"])
     p.add_argument("--sweep", choices=["single", "multi"], help="run a preset sweep instead")
     p.add_argument("--only", help="with --sweep: run only configs whose name contains this text")
-    p.add_argument("--shard", help='with --sweep: "i/n" runs every n-th config starting at i, to split across processes')
     p.add_argument("--T", type=float, default=1.0, help="length of the full solution [0, T]")
     p.add_argument("--epochs", type=int, default=TUNED_EPOCHS)
     p.add_argument("--lbfgs", type=int, default=None, help="L-BFGS steps (default: tuned 20000)")
     p.add_argument("--seed", type=int, default=99)
+    p.add_argument("--scale-from", default="reference", choices=["reference", "train"],
+                   help="output scaling from the whole reference path (default) or the training samples only")
+    p.add_argument("--csv-name", default="results.csv")
+    p.add_argument("--claim", action="store_true",
+                   help="with --sweep: let several processes share --out (give each its own --csv-name)")
     p.add_argument("--out", default="interval_runs", help="folder for results.csv and plots")
     p.add_argument("--name", help="name for a single run's row in results.csv")
     p.add_argument("--plot", nargs="+", metavar="CSV",
@@ -600,17 +633,16 @@ if __name__ == "__main__":
                    help="also save each run's full prediction table (t, reference, PINN, errors)")
     args = p.parse_args()
 
-    run_kwargs = dict(epochs=args.epochs, lbfgs_iters=args.lbfgs, seed=args.seed, T=args.T)
+    run_kwargs = dict(epochs=args.epochs, lbfgs_iters=args.lbfgs, seed=args.seed, T=args.T,
+                      scale_from=args.scale_from)
 
     if args.plot:
         Interval_Validation_Visuals.from_csv(*args.plot, save_dir=args.out).plot_sweep_all()
         print(f"plots saved to {args.out}")
     elif args.sweep:
         configs = [c for c in sweep_configs(args.sweep, args.T) if not args.only or args.only in c[0]]
-        if args.shard:
-            i, n = map(int, args.shard.split("/"))
-            configs = configs[i::n]
-        runs = Interval_Validation_Runs(args.out, save_predictions=args.save_predictions, **run_kwargs)
+        runs = Interval_Validation_Runs(args.out, args.csv_name, save_predictions=args.save_predictions,
+                                        claim=args.claim, **run_kwargs)
         print(runs.run_all(configs).to_string())
     else:
         if args.intervals:
@@ -621,7 +653,8 @@ if __name__ == "__main__":
         else:
             p.error("give --intervals, or --n-intervals with --total-length, or --sweep")
         name = args.name or "run_" + "_".join(f"{a:g}-{b:g}" for a, b in intervals) + f"_{args.physics_on}"
-        runs = Interval_Validation_Runs(args.out, save_predictions=args.save_predictions, **run_kwargs)
+        runs = Interval_Validation_Runs(args.out, args.csv_name, save_predictions=args.save_predictions,
+                                        **run_kwargs)
         row = runs.run(name, intervals, args.physics_on)
         if runs.last_solver is not None:
             Interval_Validation_Visuals(solver=runs.last_solver,

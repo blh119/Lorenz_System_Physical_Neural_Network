@@ -14,16 +14,18 @@ Quick start (from the scripts/ folder):
     # 3 equal pieces adding up to 0.45, spread evenly across [0, 1]
     python interval_validation.py --n-intervals 3 --total-length 0.45
 
-    # a whole sweep, one row per run in results.csv (re-running skips finished runs)
+    # every run is a row in <out>/results.csv (re-running skips finished runs)
+    # a whole sweep:
     python interval_validation.py --sweep single --out runs/single
     python interval_validation.py --sweep multi --out runs/multi
 
 Or from Python:
 
-    from interval_validation import Lorenz_Interval_Validation, make_intervals
-    v = Lorenz_Interval_Validation(train_intervals=make_intervals(3, 0.45), physics_on="full")
-    v.pinn_pipeline()
-    print(v.summary())
+    from interval_validation import Interval_Validation_Runs, make_intervals, sweep_configs
+    runs = Interval_Validation_Runs("runs/mine")
+    runs.run("three_pieces", make_intervals(3, 0.45), physics_on="full")
+    runs.run_all(sweep_configs("single"))
+    runs.results_df   # pandas DataFrame, also saved as runs/mine/results.csv
 """
 
 import argparse
@@ -285,21 +287,59 @@ def sweep_configs(kind, T=1.0):
     return configs
 
 
-def run_sweep(configs, out_dir, **run_kwargs):
-    """Run each config, appending to out_dir/results.csv. Finished names are skipped."""
-    os.makedirs(out_dir, exist_ok=True)
-    csv = os.path.join(out_dir, "results.csv")
-    done = set(pd.read_csv(csv)["name"]) if os.path.exists(csv) else set()
+class Interval_Validation_Runs:
+    """Keeps every validation run in one DataFrame and writes it to a CSV.
 
-    for name, intervals, mode in configs:
-        if name in done:
-            continue
-        print(f"\n=== {name}: {intervals}, physics on {mode} ===")
-        row, _ = run_one(intervals, mode, plot_path=os.path.join(out_dir, f"{name}.png"), **run_kwargs)
+        runs = Interval_Validation_Runs("runs/my_sweep")
+        runs.run("first_half", [(0, 0.5)], physics_on="full")
+        runs.run_all(sweep_configs("single"))
+        runs.results_df            # one row per run
+        runs.to_csv()              # also written after every run
+
+    If csv_path already exists its rows are loaded first, and a run whose
+    name is already there is skipped, so an interrupted sweep picks up
+    where it stopped.
+    """
+
+    def __init__(self, out_dir="interval_runs", csv_name="results.csv",
+                 save_plots=True, save_predictions=False, **run_kwargs):
+        self.out_dir = out_dir
+        self.csv_path = os.path.join(out_dir, csv_name)
+        self.save_plots = save_plots
+        self.save_predictions = save_predictions
+        self.run_kwargs = run_kwargs  # epochs, lbfgs_iters, seed, T, ...
+        os.makedirs(out_dir, exist_ok=True)
+        self.results_df = pd.read_csv(self.csv_path) if os.path.exists(self.csv_path) else pd.DataFrame()
+
+    def done(self, name):
+        return not self.results_df.empty and name in set(self.results_df["name"])
+
+    def run(self, name, intervals, physics_on="train", **overrides):
+        """Train one model, add its row to results_df and rewrite the CSV."""
+        if self.done(name):
+            print(f"skipping {name}: already in {self.csv_path}")
+            return self.results_df[self.results_df["name"] == name].iloc[0].to_dict()
+
+        print(f"\n=== {name}: {intervals}, physics on {physics_on} ===")
+        plot = os.path.join(self.out_dir, f"{name}.png") if self.save_plots else None
+        row, solver = run_one(intervals, physics_on, plot_path=plot, **{**self.run_kwargs, **overrides})
+        if self.save_predictions:
+            solver.pred_df.to_csv(os.path.join(self.out_dir, f"{name}_predictions.csv"), index=False)
+
         row = {"name": name, **row}
-        pd.DataFrame([row]).to_csv(csv, mode="a", header=not os.path.exists(csv), index=False)
+        self.results_df = pd.concat([self.results_df, pd.DataFrame([row])], ignore_index=True)
+        self.to_csv()
         print({k: row[k] for k in ["held_out_rel_l2", "held_out_max_abs", "train_rel_l2", "seconds"]})
-    return pd.read_csv(csv)
+        return row
+
+    def run_all(self, configs):
+        """configs: list of (name, intervals, physics_on), e.g. from sweep_configs."""
+        for name, intervals, physics_on in configs:
+            self.run(name, intervals, physics_on)
+        return self.results_df
+
+    def to_csv(self, path=None):
+        self.results_df.to_csv(path or self.csv_path, index=False)
 
 
 if __name__ == "__main__":
@@ -318,7 +358,10 @@ if __name__ == "__main__":
     p.add_argument("--epochs", type=int, default=TUNED_EPOCHS)
     p.add_argument("--lbfgs", type=int, default=None, help="L-BFGS steps (default: tuned 20000)")
     p.add_argument("--seed", type=int, default=99)
-    p.add_argument("--out", default="interval_runs")
+    p.add_argument("--out", default="interval_runs", help="folder for results.csv and plots")
+    p.add_argument("--name", help="name for a single run's row in results.csv")
+    p.add_argument("--save-predictions", action="store_true",
+                   help="also save each run's full prediction table (t, reference, PINN, errors)")
     args = p.parse_args()
 
     run_kwargs = dict(epochs=args.epochs, lbfgs_iters=args.lbfgs, seed=args.seed, T=args.T)
@@ -328,7 +371,8 @@ if __name__ == "__main__":
         if args.shard:
             i, n = map(int, args.shard.split("/"))
             configs = configs[i::n]
-        print(run_sweep(configs, args.out, **run_kwargs).to_string())
+        runs = Interval_Validation_Runs(args.out, save_predictions=args.save_predictions, **run_kwargs)
+        print(runs.run_all(configs).to_string())
     else:
         if args.intervals:
             intervals = parse_intervals(args.intervals)
@@ -337,7 +381,9 @@ if __name__ == "__main__":
                                        args.end if args.end is not None else args.T, args.placement, args.seed)
         else:
             p.error("give --intervals, or --n-intervals with --total-length, or --sweep")
-        os.makedirs(args.out, exist_ok=True)
-        row, _ = run_one(intervals, args.physics_on, plot_path=os.path.join(args.out, "errors.png"), **run_kwargs)
+        name = args.name or "run_" + "_".join(f"{a:g}-{b:g}" for a, b in intervals) + f"_{args.physics_on}"
+        runs = Interval_Validation_Runs(args.out, save_predictions=args.save_predictions, **run_kwargs)
+        row = runs.run(name, intervals, args.physics_on)
         for k, val in row.items():
             print(f"{k:>18}: {val}")
+        print(f"saved to {runs.csv_path}")

@@ -337,7 +337,7 @@ class Lorenz_PINN_solver(Lorenz):
         # Physics loss: fresh random collocation times every step
         # (L-BFGS passes in a fixed set, since it needs the same loss each call)
         if t_colloc is None:
-            t_colloc = tf.random.uniform((self.n_colloc, 1), 0.0, self.T, dtype=DTYPE)
+            t_colloc = self.random_colloc()
         loss_phys = tf.reduce_mean(tf.square(self.physics_residual(t_colloc)))
 
         # Initial condition loss
@@ -347,6 +347,14 @@ class Lorenz_PINN_solver(Lorenz):
         total = self.w_data * loss_data + self.w_phys * loss_phys + self.w_ic * loss_ic # Plot each one of these
         
         return total, loss_data, loss_phys, loss_ic
+
+    def random_colloc(self):
+        """Fresh physics points for one Adam/SGD step, uniform on [0, T]."""
+        return tf.random.uniform((self.n_colloc, 1), 0.0, self.T, dtype=DTYPE)
+
+    def fixed_colloc(self):
+        """Evenly spaced physics points for L-BFGS on [0, T]."""
+        return tf.reshape(tf.linspace(tf.constant(0.0, DTYPE), self.T, self.n_colloc_lbfgs), (-1, 1))
 
     def _train_step(self):
 
@@ -425,7 +433,7 @@ class Lorenz_PINN_solver(Lorenz):
         from scipy.optimize import minimize
 
         self.w_phys.assign(self.w_phys_target)
-        t_colloc = tf.reshape(tf.linspace(tf.constant(0.0, DTYPE), self.T, self.n_colloc_lbfgs), (-1, 1))
+        t_colloc = self.fixed_colloc()
         shapes = [v.shape for v in self.train_vars]
         sizes = [int(np.prod(sh)) for sh in shapes]
 

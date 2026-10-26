@@ -141,6 +141,11 @@ class Lorenz_Interval_Validation(Lorenz_PINN_solver):
     def __init__(self, train_intervals=((0.0, 0.5),), physics_on="train", scale_from="reference",
                  **solver_kwargs):
         super().__init__(**solver_kwargs)
+        # The base class only calls tf.random.set_seed, which doesn't pin the
+        # Keras weight initializer: the starting weights then depend on how
+        # many models the process built before. This pins Python, NumPy, TF
+        # and Keras together, so a run's seed fully decides its starting point.
+        tf.keras.utils.set_random_seed(self.seed)
         if scale_from not in ("reference", "train"):
             raise ValueError("scale_from must be 'reference' or 'train'")
         self.scale_from = scale_from

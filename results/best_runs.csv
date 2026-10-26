@@ -1,0 +1,9 @@
+training_data,optimizer,lbfgs,learning_rate,adam_or_sgd_epochs,lbfgs_steps,seed,rel_l2_vs_rk4,max_abs_vs_rk4,meets_1e-4_target,seconds,runs_compared,source_experiment,notes
+Euler,Adam,no,0.01,10000,0,99,0.0017683910932445,0.0515138960957948,no,153.0,6,3. Euler vs RK4,
+Euler,SGD,no,0.005,10000,0,99,0.0449708400687411,1.9103973077678305,no,139.0,8,3. Euler vs RK4,
+Euler,Adam,yes,0.001,10000,5000,99,0.0017995308701549,0.0484038571868019,no,522.0,3,3. Euler vs RK4,
+Euler,SGD,yes,0.01,3000,5000,99,0.0018025287017893,0.0483766288674836,no,408.0,1,3. Euler vs RK4,
+RK4,Adam,no,0.01,10000,0,99,6.448425025513752e-05,0.0028324238896235,rel L2 only,166.0,6,2. Optimizer and learning rate,
+RK4,SGD,no,0.005,10000,0,99,0.0462887111079972,1.994286459212816,no,176.0,8,2. Optimizer and learning rate,
+RK4,Adam,yes,0.01,10000,13757,99,1.373e-06,5.538e-05,yes,1117.0,12,4. Tuned model,"lbfgs_iters=20000; scipy stopped at its 15,000-evaluation limit. Graphs in results/tuned_model/"
+RK4,SGD,yes,0.01,3000,5000,99,1.115092624098536e-05,0.0004500920222305,rel L2 only,471.0,1,2. Optimizer and learning rate,

@@ -522,7 +522,8 @@ class Interval_Validation_Visuals:
         self._need("results")
         from matplotlib.colors import LogNorm
         df = self.results_df[(self.results_df["n_intervals"] == 1) & (self.results_df["physics_on"] == physics_on)]
-        grid = df.pivot_table(index="train_length", columns="first_start", values=metric)
+        # several runs with the same start and length (e.g. other seeds): show the first, don't average
+        grid = df.pivot_table(index="train_length", columns="first_start", values=metric, aggfunc="first")
         fig, ax = plt.subplots(figsize=(7, 4.8))
         vals = grid.values
         cmap = plt.get_cmap("Blues").copy()

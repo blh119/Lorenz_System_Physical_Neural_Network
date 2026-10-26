@@ -35,6 +35,7 @@ Or from Python:
 
 import argparse
 import os
+import sys
 import time
 
 import numpy as np
@@ -341,8 +342,14 @@ class Interval_Validation_Runs:
     def done(self, name):
         return not self.results_df.empty and name in set(self.results_df["name"])
 
-    def run(self, name, intervals, physics_on="train", **overrides):
-        """Train one model, add its row to results_df and rewrite the CSV."""
+    def run(self, name, intervals, physics_on="train", overwrite=False, **overrides):
+        """Train one model, add its row to results_df and rewrite the CSV.
+
+        overwrite=True retrains a run whose name is already in the CSV and
+        replaces its row, instead of skipping it.
+        """
+        if overwrite and self.done(name):
+            self.results_df = self.results_df[self.results_df["name"] != name].reset_index(drop=True)
         if self.done(name):
             print(f"skipping {name}: already in {self.csv_path}")
             return self.results_df[self.results_df["name"] == name].iloc[0].to_dict()
@@ -649,7 +656,8 @@ class Interval_Validation_Visuals:
         return figs
 
 
-if __name__ == "__main__":
+def main_cli():
+    """Command-line entry point (see the examples at the top of the file)."""
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--intervals", help='training intervals, e.g. "0-0.3, 0.6-0.8"')
     p.add_argument("--n-intervals", type=int, help="number of equal pieces (with --total-length)")
@@ -706,3 +714,51 @@ if __name__ == "__main__":
         for k, val in row.items():
             print(f"{k:>18}: {val}")
         print(f"saved to {runs.csv_path}")
+
+
+def main_ide(what, intervals, physics_on, lbfgs_iters, sweep, plot_csvs, out_dir, show_plots):
+    """Entry point for the settings block below, for pressing Run in an IDE."""
+    if what == "plot":
+        vis = Interval_Validation_Visuals.from_csv(*plot_csvs, save_dir=out_dir)
+        vis.plot_sweep_all(show=show_plots)
+        print(f"plots saved to {out_dir}")
+        return vis
+
+    runs = Interval_Validation_Runs(out_dir, lbfgs_iters=lbfgs_iters)
+    if what == "sweep":
+        runs.run_all(sweep_configs(sweep))
+        Interval_Validation_Visuals(results_df=runs.results_df,
+                                    save_dir=os.path.join(out_dir, "plots")).plot_sweep_all(show=show_plots)
+    elif what == "single":
+        name = "run_" + "_".join(f"{a:.3g}-{b:.3g}" for a, b in intervals) + f"_{physics_on}"
+        row = runs.run(name, intervals, physics_on, overwrite=True)
+        Interval_Validation_Visuals(solver=runs.last_solver,
+                                    save_dir=os.path.join(out_dir, name)).plot_run_all(show=show_plots)
+        for k, val in row.items():
+            print(f"{k:>18}: {val}")
+    else:
+        raise ValueError("what must be 'single', 'sweep' or 'plot'")
+    print(f"results saved to {runs.csv_path}")
+    return runs
+
+
+if __name__ == "__main__":
+
+    # ---------------- Settings for running from an IDE ----------------
+    # Edit these and press Run. Running from a terminal with arguments
+    # (python interval_validation.py --intervals ...) ignores this block.
+    HERE = os.path.dirname(os.path.abspath(__file__))  # results go next to this file, wherever the IDE runs from
+
+    WHAT = "single"             # "single": one run, "sweep": a preset sweep, "plot": graphs from results CSVs
+    INTERVALS = make_intervals(3, 0.05, placement="centered")  # or a list, e.g. [(0, 0.3), (0.6, 0.8)]
+    PHYSICS_ON = "full"         # "full": physics on all of [0, T]; "train": only inside the intervals
+    LBFGS_ITERS = 20000         # tuned value (about 30 min per run); 2000 gives a quick 5-10 min run
+    SWEEP = "single"            # with WHAT = "sweep": "single", "multi" or "budget"
+    PLOT_CSVS = [os.path.join(HERE, "sweep_results.csv")]  # with WHAT = "plot"
+    OUT_DIR = os.path.join(HERE, "interval_runs")
+    SHOW_PLOTS = True           # also open the figures (saved as PNGs either way)
+
+    if len(sys.argv) > 1:
+        main_cli()
+    else:
+        main_ide(WHAT, INTERVALS, PHYSICS_ON, LBFGS_ITERS, SWEEP, PLOT_CSVS, OUT_DIR, SHOW_PLOTS)

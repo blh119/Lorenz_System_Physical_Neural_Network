@@ -443,7 +443,7 @@ class Interval_Validation_Visuals:
 
     def _title(self):
         s = self.solver
-        iv = ", ".join(f"[{a:g}, {b:g}]" for a, b in s.train_intervals)
+        iv = ", ".join(f"[{a:.3g}, {b:.3g}]" for a, b in s.train_intervals)
         return f"Trained on {iv} ({self.MODE_LABELS[s.physics_on]})"
 
     # -------- one run --------

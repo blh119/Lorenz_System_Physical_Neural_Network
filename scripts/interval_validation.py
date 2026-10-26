@@ -391,7 +391,7 @@ class Interval_Validation_Visuals:
 
     VARS = ["x", "y", "z"]
     COLORS = {"x": "tab:blue", "y": "tab:orange", "z": "tab:green"}
-    MODE_COLORS = {"train": "tab:purple", "full": "tab:blue"}
+    MODE_COLORS = {"train": "tab:orange", "full": "tab:blue"}
     MODE_LABELS = {"train": "physics on training intervals only", "full": "physics on all of [0, T]"}
     TRAIN_SHADE = dict(color="tab:green", alpha=0.12)
     METRIC_LABELS = {"held_out_rel_l2": "held-out relative L2 error",
@@ -569,36 +569,60 @@ class Interval_Validation_Visuals:
         self._save(fig, save_path)
         return fig
 
-    def plot_interval_count(self, metric="held_out_rel_l2", physics_on="full", save_path=None):
-        """Error against the number of intervals, one line per total length and placement.
+    PLACEMENTS = ["spread over [0, T]", "packed from t = 0", "away from both ends"]
 
-        n = 1 points come from the single-interval runs starting at t = 0.
+    def _placement(self, df):
+        """Name each layout by its shape: touches both ends, starts at 0 only, or neither."""
+        T = df["last_end"].max()
+        at0 = np.isclose(df["first_start"], 0)
+        atT = np.isclose(df["last_end"], T)
+        return np.select([at0 & atT, at0], self.PLACEMENTS[:2], self.PLACEMENTS[2])
+
+    def plot_interval_count(self, metric="held_out_rel_l2", physics_on="full", save_path=None):
+        """Error against the number of intervals: one panel per placement, one line per total length.
+
+        A single interval that starts at t = 0 is drawn as n = 1 in both the
+        "spread" and "packed" panels, since it is the same layout for both.
+        Single intervals away from both ends are left out: there are several
+        per length (one per start time), so they have no one n = 1 value.
         """
         self._need("results")
         df = self.results_df[self.results_df["physics_on"] == physics_on].copy()
-        names = df["name"].astype(str)
-        df["placement"] = np.where(names.str.contains("_front_"), "packed near t = 0", "spread over [0, T]")
-        fig, ax = plt.subplots(figsize=(8, 4.8))
-        colors = ["tab:blue", "tab:orange", "tab:green", "tab:red"]
-        k = 0
-        for total in sorted(df.loc[df["n_intervals"] > 1, "train_length"].round(6).unique()):
-            one = df[(df["n_intervals"] == 1) & np.isclose(df["train_length"], total) & (df["first_start"] == 0)]
-            for placement, ls in [("spread over [0, T]", "-"), ("packed near t = 0", "--")]:
-                part = df[(df["n_intervals"] > 1) & np.isclose(df["train_length"], total)
-                          & (df["placement"] == placement)]
-                part = pd.concat([one, part]).sort_values("n_intervals")
-                if len(part) > 1:
-                    ax.plot(part["n_intervals"], part[metric], ls=ls, lw=2, marker="o", ms=8,
-                            color=colors[k % len(colors)], label=f"total {total:g}, {placement}")
-                    k += 1
-        ax.set_yscale("log")
-        ax.axhline(1e-4, color="black", ls=":", lw=0.8, label="1e-4 target")
-        ax.set_xlabel("number of training intervals")
-        ax.set_ylabel(self.METRIC_LABELS.get(metric, metric) + " (log)")
-        ax.set_title(self.MODE_LABELS[physics_on], fontsize=10)
-        ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
-        ax.grid(alpha=0.3, which="both")
-        ax.legend(fontsize=8)
+        df["placement"] = self._placement(df)
+        df["total"] = df["train_length"].round(6)
+        totals = sorted(df.loc[df["n_intervals"] > 1, "total"].unique())
+        colors = dict(zip(totals, ["tab:blue", "tab:orange", "tab:green", "tab:red",
+                                   "tab:purple", "tab:brown", "tab:pink", "tab:olive"]))
+
+        placements = [p for p in self.PLACEMENTS
+                      if ((df["placement"] == p) & (df["n_intervals"] > 1)).any()]
+        fig, axes = plt.subplots(1, len(placements), figsize=(4.4 * len(placements), 4.5),
+                                 sharey=True, squeeze=False)
+        axes = axes[0]
+        for ax, placement in zip(axes, placements):
+            xs = set()
+            for total in totals:
+                part = df[(df["total"] == total) & (df["n_intervals"] > 1) & (df["placement"] == placement)]
+                if part.empty:
+                    continue
+                if placement != self.PLACEMENTS[2]:
+                    one = df[(df["total"] == total) & (df["n_intervals"] == 1) & np.isclose(df["first_start"], 0)]
+                    part = pd.concat([one, part])
+                part = part.sort_values("n_intervals")
+                xs.update(part["n_intervals"])
+                ax.plot(part["n_intervals"], part[metric], lw=2, marker="o", ms=8,
+                        markeredgecolor="white", color=colors[total], label=f"total {total:g}")
+            ax.axhline(1e-4, color="black", ls=":", lw=0.8, label="1e-4 target")
+            ax.set_xscale("log")
+            ax.set_xticks(sorted(xs), [str(int(n)) for n in sorted(xs)])
+            ax.minorticks_off()
+            ax.set_yscale("log")
+            ax.set_title(placement, fontsize=10)
+            ax.set_xlabel("number of training intervals")
+            ax.grid(alpha=0.3, which="both")
+            ax.legend(fontsize=8)
+        axes[0].set_ylabel(self.METRIC_LABELS.get(metric, metric) + " (log)")
+        fig.suptitle(self.MODE_LABELS[physics_on], fontsize=11)
         fig.tight_layout()
         self._save(fig, save_path)
         return fig

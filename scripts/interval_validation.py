@@ -285,8 +285,22 @@ def sweep_configs(kind, T=1.0):
                     iv = make_intervals(n, total, 0.0, end, "spread")
                     for mode in ["train", "full"]:
                         configs.append((f"multi_tot{total:g}_n{n}_{placement}_{mode}", iv, mode))
+    elif kind == "budget":
+        # Search for the least data that still predicts the rest of [0, T].
+        # physics on all of [0, T]: small total lengths, one to three pieces
+        for total in [0.05, 0.1]:
+            configs.append((f"budget_tot{total:g}_n1_at0.3_full", [(0.3 - total / 2, 0.3 + total / 2)], "full"))
+            for n in [2, 3]:
+                for placement in ["spread", "centered"]:
+                    configs.append((f"budget_tot{total:g}_n{n}_{placement}_full",
+                                    make_intervals(n, total, 0.0, T, placement), "full"))
+        # physics only where there is data: many short pieces covering [0, T],
+        # so the gaps between them stay small (interpolation, not extrapolation)
+        for total in [0.25, 0.5]:
+            for n in [10, 20]:
+                configs.append((f"budget_tot{total:g}_n{n}_spread_train", make_intervals(n, total, 0.0, T), "train"))
     else:
-        raise ValueError("kind must be 'single' or 'multi'")
+        raise ValueError("kind must be 'single', 'multi' or 'budget'")
     return configs
 
 
@@ -614,7 +628,7 @@ if __name__ == "__main__":
     p.add_argument("--end", type=float, default=None, help="latest time a piece may end (default T)")
     p.add_argument("--placement", default="spread", choices=["spread", "centered", "random"])
     p.add_argument("--physics-on", default="train", choices=["train", "full"])
-    p.add_argument("--sweep", choices=["single", "multi"], help="run a preset sweep instead")
+    p.add_argument("--sweep", choices=["single", "multi", "budget"], help="run a preset sweep instead")
     p.add_argument("--only", help="with --sweep: run only configs whose name contains this text")
     p.add_argument("--T", type=float, default=1.0, help="length of the full solution [0, T]")
     p.add_argument("--epochs", type=int, default=TUNED_EPOCHS)

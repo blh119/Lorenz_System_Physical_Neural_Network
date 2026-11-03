@@ -204,7 +204,7 @@ class Horizon_Visuals:
         ax1.set_yscale("log")
         ax1.set_xlabel("position inside the unit (0 = start, 1 = end)")
         ax1.set_ylabel("growth of an error by the unit's end")
-        ax1.set_title("An error early in a unit grows the most", fontsize=10)
+        ax1.set_title("How much an error grows by the unit's end (chaos only)", fontsize=10)
         ax1.legend(fontsize=7)
 
         ax2.plot(amp["t"], amp["growth"], color="tab:purple", lw=1.3, label="error growth to unit end")
@@ -216,7 +216,7 @@ class Horizon_Visuals:
         tw.plot(amp["t"], amp["x"], color="gray", lw=0.9, alpha=0.8, label="reference x(t)")
         tw.axhline(0, color="gray", lw=0.5)
         tw.set_ylabel("x (sign = which wing)", color="gray")
-        ax2.set_title("Along the path: growth peaks before fast swings and wing switches", fontsize=10)
+        ax2.set_title("Growth along the path stays small (about 0.8x to 2x per unit)", fontsize=10)
         fig.tight_layout()
         self._save(fig, save_name or f"unit_importance_T{T:g}.png")
         return fig, amp

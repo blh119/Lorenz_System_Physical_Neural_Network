@@ -211,3 +211,48 @@ Both use the same architecture, optimizer and data density. The only difference 
   - Late pieces keep the hand-off error small, which is what protects the later windows.
 
 **Caveats:** each window here starts from the true state. In real time-marching it starts from the previous prediction, so this test shows what each unit needs in the best case. All runs use one seed and L-BFGS capped at 1000.
+
+---
+
+## 5. Is one network per time unit a rule? T = 10 with different window lengths
+
+![T = 10, error over time and hand-off error for each window length](plots/window_lengths_T10.png)
+
+**The test**
+
+- Time-marching at T = 10 with data at every point.
+- Window lengths of 0.5, 1, 1.5 and 2 units.
+- Everything else is fixed: data and physics points per unit, Adam for 10k epochs then L-BFGS up to 5000 steps, seed 99, and starting each window from the previous window's weights.
+- Results are in `t10_windows.csv`.
+
+**What is plotted**
+
+- **Left:** the 3D error over time for each window length, on a log scale.
+- **Right:** the error at the end of each window. That is the starting point the next window inherits. A sudden jump marks a window whose training got stuck.
+
+| Window length | Relative L2 | Worst point | First stuck window | Off the path from |
+|---|---|---|---|---|
+| 0.5 | 8.0e-7 | 8.7e-5 | none | never (all 20 hand-offs at 1e-5 or less) |
+| 1 | 6.5e-2 | 7.3 | window 9, [8, 9] | t = 8 |
+| 1.5 | 4.5e-2 | 5.8 | window 3, [3, 4.5] | t = 3 |
+| 2 | 2.0e-2 | 1.5 | window 3, [4, 6] | t = 4 |
+
+The relative L2 values don't rank the failures well. The 2-unit run has the smallest value but goes off the path earliest after the 1.5-unit run. Its error just stays at about 1 rather than climbing to 5 to 7, so read the "Off the path from" column, not the relative L2.
+
+**How to read it**
+
+- **Shorter windows are more reliable, and none of the longer ones is guaranteed.** Only the 0.5-unit windows reach T = 10 cleanly. One-unit windows hold for 8 units, which is why they looked safe at T = 3 and 5, and then a single window gets stuck. The 1.5- and 2-unit windows get stuck by their third window.
+- **Longer windows are also less accurate before they fail.** In the first window, which contains the big swing, the error handed on is about 4e-6 with 0.5-unit windows, 3e-5 with 1-unit, 8e-4 with 1.5-unit and 6e-3 with 2-unit. That matches the one-network results, which got steadily worse from T = 1 to T = 2.5.
+- **Each failure starts right at a window's start.** Every window that got stuck was handed a good starting point: 2e-5 for the 1-unit run at t = 8, and 2e-4 to 1e-3 for the others. Its data covered the whole window, yet its data loss stayed high (for example 1.4e-2 after Adam for window 9 of the 1-unit run, against 4e-5 for window 8). So this is the same training failure as the T = 3 one-network run, not chaos amplifying a small error.
+- **One stuck window ruins the rest of the run.** The next window's start is fixed exactly to the bad end point, while its data shows the true path. It cannot satisfy both, so the error never comes back down.
+
+**Answer to "is one network per unit a rule?"** No. The rule is **keep each window short**. One unit happened to be short enough for T = 5. At T = 10, with ten chances for a window to get stuck, 0.5 units was needed.
+
+My explanation for why short windows help is an inference. Each window has less motion to fit, so Adam rarely gets stuck, and the chance that at least one window gets stuck grows with the number of windows.
+
+**Caveats and possible fixes**
+
+- All of this comes from one seed per window length. A different seed could move where the 1-unit run gets stuck, or avoid it.
+- Two fixes would make the chain sturdier at any window length. Neither has been built yet:
+  1. Check each window's final loss and retrain it with fresh weights if the loss stays high.
+  2. Let the data correct the starting point (a soft starting condition) instead of fixing it exactly to the previous prediction.

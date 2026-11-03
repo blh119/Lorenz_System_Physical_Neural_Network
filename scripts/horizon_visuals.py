@@ -11,6 +11,7 @@ x_err, y_err, z_err, err_3d), so nothing has to be retrained to make them.
     hv.plot_errors_compare("pred_T3_s99.csv", "pred_tm_T3_s99.csv", T=3)
     hv.plot_unit_importance(T=5)
     plot_unit_placement("unit_placement.csv", save_dir="results/horizon/plots")
+    plot_window_lengths("results/horizon", T=10, save_dir="results/horizon/plots")
 
 Or from the command line, to make every plot for which predictions exist:
 
@@ -273,6 +274,42 @@ def plot_unit_placement(results, save_dir=None, save_name="unit_placement.png"):
     return fig
 
 
+def plot_window_lengths(pred_dir, T=10, windows=(0.5, 1, 1.5, 2), save_dir=None,
+                        save_name="window_lengths_T10.png", every=10):
+    """Time-marching at one T with different window lengths: error over time,
+    and the error handed from each window to the next."""
+    colors = {0.5: "#2e9e6b", 1: "#2a78d6", 1.5: "#8e5cc9", 2: "#eb6834"}
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 4.2), gridspec_kw={"width_ratios": [1.6, 1]})
+    for w in windows:
+        f = os.path.join(pred_dir, f"pred_tm_T{T:g}_w{w:g}_s99.csv")
+        if not os.path.exists(f):
+            continue
+        d = pd.read_csv(f)
+        ref = np.sqrt((d[["x_pos", "y_pos", "z_pos"]] ** 2).sum(axis=1))
+        rel = np.linalg.norm(d.err_3d) / np.linalg.norm(ref)
+        c = colors.get(w, None)
+        dd = d.iloc[::every]
+        ax1.plot(dd.t, dd.err_3d + 1e-12, color=c, lw=1.1, label=f"{w:g}-unit windows (rel. L2 {rel:.1e})")
+        ends = d.groupby("window").tail(1)
+        ax2.plot(ends.t, ends.err_3d, marker="o", ms=4, color=c, lw=1.4, label=f"{w:g}-unit windows")
+    for ax in (ax1, ax2):
+        ax.set_yscale("log")
+        ax.axhline(1e-4, color="gray", ls="--", lw=1)
+        ax.set_xlabel("t")
+        ax.set_xlim(0, T)
+    ax1.set_ylim(1e-8, 1e2)
+    ax1.set_ylabel("3D distance error")
+    ax1.set_title(f"T = {T:g}, data everywhere: error over time for each window length", fontsize=10)
+    ax1.legend(frameon=False, fontsize=8, loc="lower right")
+    ax2.set_ylabel("error at the end of each window (handed to the next)")
+    ax2.set_title("Hand-off error: a jump marks a window that got stuck", fontsize=10)
+    ax2.legend(frameon=False, fontsize=8, loc="upper left")
+    fig.tight_layout()
+    if save_dir:
+        fig.savefig(os.path.join(save_dir, save_name), dpi=150, bbox_inches="tight")
+    return fig
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--pred-dir", required=True, help="folder with pred_T*_s99.csv and pred_tm_T*_s99.csv")
@@ -293,4 +330,6 @@ if __name__ == "__main__":
     placement = os.path.join(a.pred_dir, "unit_placement.csv")
     if os.path.exists(placement):
         plot_unit_placement(placement, save_dir=a.save_dir)
+    if any(f.startswith("pred_tm_T10_w") for f in os.listdir(a.pred_dir)):
+        plot_window_lengths(a.pred_dir, T=10, save_dir=a.save_dir)
     print("plots written to", a.save_dir)

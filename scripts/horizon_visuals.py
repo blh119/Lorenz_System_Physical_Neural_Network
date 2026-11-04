@@ -310,6 +310,42 @@ def plot_window_lengths(pred_dir, T=10, windows=(0.5, 1, 1.5, 2), save_dir=None,
     return fig
 
 
+def plot_window_states(pred_dir, T=10, windows=(0.5, 1, 1.5, 2), save_dir=None,
+                       save_name="window_states_T10.png", every=10):
+    """x, y, z against the reference for each window length (one column each)."""
+    found = [(w, os.path.join(pred_dir, f"pred_tm_T{T:g}_w{w:g}_s99.csv")) for w in windows]
+    found = [(w, f) for w, f in found if os.path.exists(f)]
+    fig, axes = plt.subplots(3, len(found), figsize=(4.2 * len(found), 7.5), sharex=True, sharey="row",
+                             squeeze=False)
+    colors = ["#1f77b4", "#ff7f0e", "#2ca02c"]
+    for j, (w, f) in enumerate(found):
+        d = pd.read_csv(f).iloc[::every]
+        ref = np.sqrt((d[["x_pos", "y_pos", "z_pos"]] ** 2).sum(axis=1))
+        full = pd.read_csv(f)
+        ref_full = np.sqrt((full[["x_pos", "y_pos", "z_pos"]] ** 2).sum(axis=1))
+        rel = np.linalg.norm(full.err_3d) / np.linalg.norm(ref_full)
+        for i, v in enumerate("xyz"):
+            ax = axes[i, j]
+            ax.plot(d.t, d[f"{v}_pos"], color="black", lw=1.6, label="reference (RK4)")
+            ax.plot(d.t, d[f"{v}_pinn"], color=colors[i], lw=1.2, ls="--", label="PINN")
+            for k in np.arange(w, T - 1e-9, w):
+                ax.axvline(k, color="gray", lw=0.5, ls=":")
+            if j == 0:
+                ax.set_ylabel(v)
+            if i == 0:
+                ax.set_title(f"{w:g}-unit windows\nrelative L2 = {rel:.1e}", fontsize=10)
+            if i == 2:
+                ax.set_xlabel("t")
+            if j == len(found) - 1:
+                ax.legend(fontsize=7, loc="upper right")
+    fig.suptitle(f"x, y, z over time, T = {T:g}, time-marching with data at every point (dotted: window edges)",
+                 fontsize=11)
+    fig.tight_layout()
+    if save_dir:
+        fig.savefig(os.path.join(save_dir, save_name), dpi=150, bbox_inches="tight")
+    return fig
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--pred-dir", required=True, help="folder with pred_T*_s99.csv and pred_tm_T*_s99.csv")
@@ -332,4 +368,5 @@ if __name__ == "__main__":
         plot_unit_placement(placement, save_dir=a.save_dir)
     if any(f.startswith("pred_tm_T10_w") for f in os.listdir(a.pred_dir)):
         plot_window_lengths(a.pred_dir, T=10, save_dir=a.save_dir)
+        plot_window_states(a.pred_dir, T=10, save_dir=a.save_dir)
     print("plots written to", a.save_dir)

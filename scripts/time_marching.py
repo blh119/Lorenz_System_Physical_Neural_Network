@@ -73,15 +73,18 @@ class Lorenz_Time_Marching:
     data_intervals  : global (start, end) pieces with data; None means data everywhere
     n_sample        : data points per unit of time (200 matches the tuned run)
     warm_start      : start each window's network from the previous window's weights
+    stop_above      : stop early once a window's end error (3D distance) exceeds this
     """
 
     def __init__(self, T=3.0, window=1.0, data_intervals=None, n_sample=200, seed=99,
-                 epochs=TUNED_EPOCHS, lbfgs_iters=5000, warm_start=True, print_every=5000):
+                 epochs=TUNED_EPOCHS, lbfgs_iters=5000, warm_start=True, print_every=5000,
+                 stop_above=None):
         self.T, self.window = T, window
         self.data_intervals = [(0.0, T)] if data_intervals is None else sorted(data_intervals)
         self.n_sample, self.seed = n_sample, seed
         self.epochs, self.lbfgs_iters = epochs, lbfgs_iters
         self.warm_start, self.print_every = warm_start, print_every
+        self.stop_above = stop_above  # stop once a window ends this far off (saves time on failed runs)
         self.dt = TUNED["dt"][0]
         self.window_rows = []
 
@@ -136,6 +139,9 @@ class Lorenz_Time_Marching:
                                      "n_data": len(w.sample_list[0]) if w.has_data else 0,
                                      "final_loss": w.loss_history[-1]["total"],
                                      "end_err_3d": float(last["err_3d"])})
+            if self.stop_above is not None and float(last["err_3d"]) > self.stop_above:
+                print(f"--- stopping: window {k + 1} ended {float(last['err_3d']):.2e} off (> {self.stop_above:g})")
+                break
 
         self.pred_df = pd.concat(preds).reset_index(drop=True)
         return self.summary(time.time() - start_time)
@@ -157,7 +163,8 @@ class Lorenz_Time_Marching:
     def summary(self, seconds):
         t = self.pred_df["t"].values
         data = self.in_data(t)
-        row = {"T": self.T, "window": self.window, "seed": self.seed,
+        row = {"T": self.T, "reached_t": float(self.pred_df["t"].iloc[-1]),
+               "window": self.window, "seed": self.seed,
                "intervals": "; ".join(f"{a:g}-{b:g}" for a, b in self.data_intervals),
                "data_length": round(sum(b - a for a, b in self.data_intervals), 10),
                "epochs": self.epochs, "lbfgs_cap": self.lbfgs_iters, "warm_start": self.warm_start}
@@ -178,13 +185,14 @@ if __name__ == "__main__":
     p.add_argument("--epochs", type=int, default=TUNED_EPOCHS)
     p.add_argument("--lbfgs", type=int, default=5000)
     p.add_argument("--no-warm-start", action="store_true")
+    p.add_argument("--stop-above", type=float, help="stop once a window ends this far off the reference")
     p.add_argument("--name", default="", help="label stored in the CSV row")
     p.add_argument("--csv", help="append the summary row to this CSV")
     p.add_argument("--save-predictions", help="write the full prediction table here")
     a = p.parse_args()
 
     tm = Lorenz_Time_Marching(T=a.T, window=a.window, seed=a.seed, epochs=a.epochs,
-                              lbfgs_iters=a.lbfgs, warm_start=not a.no_warm_start,
+                              lbfgs_iters=a.lbfgs, warm_start=not a.no_warm_start, stop_above=a.stop_above,
                               data_intervals=parse_intervals(a.intervals) if a.intervals else None)
     row = {"name": a.name, **tm.run()}
     print("ROW", json.dumps(row))

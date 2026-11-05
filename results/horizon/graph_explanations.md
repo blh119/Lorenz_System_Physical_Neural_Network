@@ -294,3 +294,20 @@ The relative L2 values on the graph are only over the part each run reached, so 
 - **Where a run breaks varies from run to run.** At T = 10, 1-unit windows got stuck at t = 8. At T = 20, with the same settings and seed, they got past that point and broke at t = 11.6. The 1.5-unit run broke at t = 3.5 at T = 10 but at t = 9.2 here. So a single run per setting tells you roughly how reliable a window length is, not exactly where it fails. One possible reason is that the first runs here briefly shared the processor with another run, which makes training not exactly repeatable. That is a guess.
 
 **Answer:** "the longer the time, the shorter the windows" holds from 2 units down to 0.5, but it is not unlimited. 0.25-unit windows failed early, and even 0.5 broke at t = 18. Every failure was a single window whose training got stuck, so the more robust fix is to **detect a stuck window (high final loss) and retrain it** before moving on, rather than just shrinking the windows. That has not been built yet.
+
+---
+
+## 7. Why the 0.25-unit windows failed: the warm start
+
+![0.25-unit windows with and without the warm start](plots/warm_vs_cold_w0.25.png)
+
+- **What a warm start is:** each window's network starts training as a copy of the previous window's trained network instead of from random weights. The window's starting point (x, y, z) is always the previous window's predicted end, either way.
+- **The evidence in the logs:**
+  - Warm-started 0.25-unit windows began at a data loss of 10 to 17, worse than fresh weights (about 2 to 6).
+  - Their data loss after Adam crept up from about 1e-8 to 1e-5 over windows 14 to 17.
+  - Window 18 then stalled at 0.8.
+  - A 0.25-unit window covers less than half a loop (one loop takes about 0.62 units), so neighbouring windows don't look alike.
+- **The test:** the same 0.25-unit windows at T = 10 with `--no-warm-start`.
+  - It went all the way to t = 10, with a relative L2 of 1.6e-7, a worst point of 4.6e-5 and every hand-off under 5e-6. That makes it the most accurate long run so far.
+  - It took 171 minutes. Losses per window are in `warm_vs_cold_losses.csv`.
+- **Conclusion:** the warm start, not the short window, broke the 0.25-unit run. It is still untested whether the warm start also caused the stuck windows at longer window lengths.

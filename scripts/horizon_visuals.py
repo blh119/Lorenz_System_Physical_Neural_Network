@@ -349,6 +349,44 @@ def plot_window_states(pred_dir, T=10, windows=(0.5, 1, 1.5, 2), save_dir=None,
     return fig
 
 
+def plot_warm_vs_cold(pred_dir, warm_pred="pred_tm_T20_w0.25_s99.csv", cold_pred="pred_tm_T10_w0.25cold_s99.csv",
+                      losses="warm_vs_cold_losses.csv", save_dir=None, save_name="warm_vs_cold_w0.25.png", every=10):
+    """0.25-unit windows with and without the warm start: error over time, and the data loss
+    each window starts training from and ends Adam with."""
+    warm, cold = (pd.read_csv(os.path.join(pred_dir, f)) for f in (warm_pred, cold_pred))
+    ls = pd.read_csv(os.path.join(pred_dir, losses))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 4.2), gridspec_kw={"width_ratios": [1.4, 1]})
+    for d, c, lab in [(warm, "#c23b8a", "warm start (weights copied from the previous window)"),
+                      (cold, "#2e9e6b", "no warm start (fresh weights every window)")]:
+        dd = d.iloc[::every]
+        ax1.plot(dd.t, dd.err_3d + 1e-12, color=c, lw=1.1, label=f"{lab}, ends at t = {d.t.iloc[-1]:g}")
+    ax1.set_yscale("log")
+    ax1.set_ylim(1e-8, 1e2)
+    ax1.axhline(1e-4, color="gray", ls="--", lw=1)
+    ax1.set_xlabel("t")
+    ax1.set_ylabel("3D distance error")
+    ax1.set_title("0.25-unit windows: error over time", fontsize=10)
+    ax1.legend(frameon=False, fontsize=8, loc="upper right")
+    for run, c in [("warm", "#c23b8a"), ("cold", "#2e9e6b")]:
+        r = ls[ls.run == run]
+        first = r[r.stage == "epoch1"]
+        end = r[r.stage == "epoch10000"]
+        ax2.plot(first.start, first.data_loss, color=c, lw=1, ls=":", marker="o", ms=3,
+                 label=f"{run}: data loss at epoch 1")
+        ax2.plot(end.start, end.data_loss, color=c, lw=1.4, marker="s", ms=3,
+                 label=f"{run}: data loss after Adam")
+    ax2.set_yscale("log")
+    ax2.set_xlim(0, 5)
+    ax2.set_xlabel("start of the window (t)")
+    ax2.set_ylabel("data loss (scaled units)")
+    ax2.set_title("Where each window starts and how well it trains", fontsize=10)
+    ax2.legend(frameon=False, fontsize=7.5, loc="center left")
+    fig.tight_layout()
+    if save_dir:
+        fig.savefig(os.path.join(save_dir, save_name), dpi=150, bbox_inches="tight")
+    return fig
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--pred-dir", required=True, help="folder with pred_T*_s99.csv and pred_tm_T*_s99.csv")

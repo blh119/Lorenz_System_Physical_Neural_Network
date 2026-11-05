@@ -278,7 +278,7 @@ def plot_window_lengths(pred_dir, T=10, windows=(0.5, 1, 1.5, 2), save_dir=None,
                         save_name="window_lengths_T10.png", every=10):
     """Time-marching at one T with different window lengths: error over time,
     and the error handed from each window to the next."""
-    colors = {0.5: "#2e9e6b", 1: "#2a78d6", 1.5: "#8e5cc9", 2: "#eb6834"}
+    colors = {0.25: "#c23b8a", 0.5: "#2e9e6b", 1: "#2a78d6", 1.5: "#8e5cc9", 2: "#eb6834"}
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 4.2), gridspec_kw={"width_ratios": [1.6, 1]})
     for w in windows:
         f = os.path.join(pred_dir, f"pred_tm_T{T:g}_w{w:g}_s99.csv")
@@ -289,7 +289,9 @@ def plot_window_lengths(pred_dir, T=10, windows=(0.5, 1, 1.5, 2), save_dir=None,
         rel = np.linalg.norm(d.err_3d) / np.linalg.norm(ref)
         c = colors.get(w, None)
         dd = d.iloc[::every]
-        ax1.plot(dd.t, dd.err_3d + 1e-12, color=c, lw=1.1, label=f"{w:g}-unit windows (rel. L2 {rel:.1e})")
+        end = d.t.iloc[-1]
+        tag = "" if end >= T - 1e-9 else f", stopped at t = {end:g}"
+        ax1.plot(dd.t, dd.err_3d + 1e-12, color=c, lw=1.1, label=f"{w:g}-unit windows (rel. L2 {rel:.1e}{tag})")
         ends = d.groupby("window").tail(1)
         ax2.plot(ends.t, ends.err_3d, marker="o", ms=4, color=c, lw=1.4, label=f"{w:g}-unit windows")
     for ax in (ax1, ax2):
@@ -300,7 +302,7 @@ def plot_window_lengths(pred_dir, T=10, windows=(0.5, 1, 1.5, 2), save_dir=None,
     ax1.set_ylim(1e-8, 1e2)
     ax1.set_ylabel("3D distance error")
     ax1.set_title(f"T = {T:g}, data everywhere: error over time for each window length", fontsize=10)
-    ax1.legend(frameon=False, fontsize=8, loc="lower right")
+    ax1.legend(frameon=False, fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.14), ncol=2)
     ax2.set_ylabel("error at the end of each window (handed to the next)")
     ax2.set_title("Hand-off error: a jump marks a window that got stuck", fontsize=10)
     ax2.legend(frameon=False, fontsize=8, loc="upper left")
@@ -328,8 +330,9 @@ def plot_window_states(pred_dir, T=10, windows=(0.5, 1, 1.5, 2), save_dir=None,
             ax = axes[i, j]
             ax.plot(d.t, d[f"{v}_pos"], color="black", lw=1.6, label="reference (RK4)")
             ax.plot(d.t, d[f"{v}_pinn"], color=colors[i], lw=1.2, ls="--", label="PINN")
-            for k in np.arange(w, T - 1e-9, w):
-                ax.axvline(k, color="gray", lw=0.5, ls=":")
+            if T / w <= 40:
+                for k in np.arange(w, T - 1e-9, w):
+                    ax.axvline(k, color="gray", lw=0.5, ls=":")
             if j == 0:
                 ax.set_ylabel(v)
             if i == 0:

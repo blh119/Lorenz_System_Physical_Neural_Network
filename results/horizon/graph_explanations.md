@@ -256,3 +256,41 @@ My explanation for why short windows help is an inference. Each window has less 
 - Two fixes would make the chain sturdier at any window length. Neither has been built yet:
   1. Check each window's final loss and retrain it with fresh weights if the loss stays high.
   2. Let the data correct the starting point (a soft starting condition) instead of fixing it exactly to the previous prediction.
+
+---
+
+## 6. T = 20: testing "the longer the time, the shorter the windows"
+
+![T = 20, error over time and hand-off error for each window length](plots/window_lengths_T20.png)
+
+![x, y, z over time at T = 20 for each window length](plots/window_states_T20.png)
+
+**The test**
+
+- This is the same setup as T = 10, with data at every point, but at T = 20 and with window lengths of 0.25, 0.5, 1, 1.5 and 2.
+- Each run stops early once a window ends more than 1 off the path (`--stop-above 1`), so some curves end before t = 20.
+- The "off the path from" column is the first time the 3D error goes above 0.1.
+
+| Window length | Windows trained | Off the path from | Run ended at |
+|---|---|---|---|
+| 0.25 | 18 of 80 | t = 4.3 | 4.5 (stopped) |
+| 0.5 | 40 of 40 | t = 18.0 | 20 |
+| 1 | 13 of 20 | t = 11.6 | 13 (stopped) |
+| 1.5 | 7 of 14 | t = 9.2 | 10.5 (stopped) |
+| 2 | 6 of 10 | t = 6.0 | 12 (stopped) |
+
+The relative L2 values on the graph are only over the part each run reached, so they can't be compared across runs. Use the "off the path from" column instead.
+
+**How to read it**
+
+- **From 2 units down to 0.5 the theory holds.** Shorter windows stay on the path longer (2 → 6, 1.5 → 9, 1 → 11.6, 0.5 → 18), and shorter windows also hand on smaller errors (right panel).
+- **It breaks at 0.25.** The 0.25-unit run was the most accurate while it lasted, with hand-off errors of about 1e-6. Then window 18, [4.25, 4.5], got stuck. That window is a calm loop, it was handed an error of only 4e-5, and it had data everywhere. Its data loss stayed at about 0.8 through all of Adam, and L-BFGS gave up after 7 steps. There seems to be a sweet spot rather than "shorter is always better". My guesses for why, untested:
+  1. There are 80 windows, so 80 chances to get stuck.
+  2. Each window rescales its outputs by the spread of x, y and z inside the window. In a very short window that spread is tiny (x varied by only about 0.4 in window 18), which makes the training problem badly scaled.
+- **T = 20 reaches the wing switches.** Up to t ≈ 13.5 the path only loops around the left wing. From then on it switches wings at t ≈ 13.55, 14.34, 17.24, 18.07 and 18.85.
+  - The 0.5-unit run got through the first three switches with errors up to about 8e-4.
+  - It got stuck in the window that holds the switch at 18.07.
+  - So longer horizons are harder partly because they reach this fast part of the attractor, not only because there are more windows.
+- **Where a run breaks varies from run to run.** At T = 10, 1-unit windows got stuck at t = 8. At T = 20, with the same settings and seed, they got past that point and broke at t = 11.6. The 1.5-unit run broke at t = 3.5 at T = 10 but at t = 9.2 here. So a single run per setting tells you roughly how reliable a window length is, not exactly where it fails. One possible reason is that the first runs here briefly shared the processor with another run, which makes training not exactly repeatable. That is a guess.
+
+**Answer:** "the longer the time, the shorter the windows" holds from 2 units down to 0.5, but it is not unlimited. 0.25-unit windows failed early, and even 0.5 broke at t = 18. Every failure was a single window whose training got stuck, so the more robust fix is to **detect a stuck window (high final loss) and retrain it** before moving on, rather than just shrinking the windows. That has not been built yet.

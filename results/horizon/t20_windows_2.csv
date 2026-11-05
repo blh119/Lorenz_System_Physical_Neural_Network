@@ -1,0 +1,2 @@
+name,T,reached_t,window,seed,intervals,data_length,epochs,lbfgs_cap,warm_start,full_rel_l2,full_max_abs,data_rel_l2,data_max_abs,held_out_rel_l2,held_out_max_abs,end_err3d_w0,end_err3d_w1,end_err3d_w2,end_err3d_w3,end_err3d_w4,end_err3d_w5,seconds
+tm_w2,20.0,12.0,2.0,99,0-20,20.0,10000,5000,True,0.041666612797489073,4.508504023404097,0.041666612797489073,4.508504023404097,,,0.01054880412325087,0.002612948371301808,0.08173069126600842,0.5593860361218065,0.14752700250317902,3.6739317404350165,6361

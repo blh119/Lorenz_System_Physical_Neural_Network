@@ -311,3 +311,24 @@ The relative L2 values on the graph are only over the part each run reached, so 
   - It went all the way to t = 10, with a relative L2 of 1.6e-7, a worst point of 4.6e-5 and every hand-off under 5e-6. That makes it the most accurate long run so far.
   - It took 171 minutes. Losses per window are in `warm_vs_cold_losses.csv`.
 - **Conclusion:** the warm start, not the short window, broke the 0.25-unit run. It is still untested whether the warm start also caused the stuck windows at longer window lengths.
+
+---
+
+## 8. T = 20 without the warm start: the stuck windows were the warm start
+
+![T = 20 with and without the warm start](plots/warm_vs_cold_T20.png)
+
+| Window length | Warm start: off the path from | No warm start: reached | Relative L2 | Worst 3D error | Largest hand-off | Time |
+|---|---|---|---|---|---|---|
+| 0.25 | t = 4.3 | t = 20 (80 windows) | 2.6e-7 | 7.5e-5 | 1.0e-5 | 224 min |
+| 0.5 | t = 18.0 | t = 20 (40 windows) | 5.6e-7 | 1.1e-4 | 1.4e-5 | 184 min |
+| 1 | t = 11.6 | t = 20 (20 windows) | 2.1e-6 | 4.3e-4 | 1.1e-4 | 148 min |
+
+- **With fresh weights in every window, all three lengths ran cleanly through all of T = 20.** That includes all five wing switches.
+- **The stuck windows in sections 5 and 6 came from the warm start.** They were not caused by the window length, the number of windows or the wing switches.
+- **Shorter windows are still more accurate, by about 8 times from 1 unit to 0.25.** But window length no longer decides whether a run survives.
+- **The warm-started runs also drift upward well before they break.** The pink curves sit above the green ones.
+- **Not yet tested:**
+  - the no-warm-start runs at 1.5 and 2-unit windows
+  - other seeds
+  - longer T (40 or more), to find where chaos rather than training sets the limit

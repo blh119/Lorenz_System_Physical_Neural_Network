@@ -387,6 +387,35 @@ def plot_warm_vs_cold(pred_dir, warm_pred="pred_tm_T20_w0.25_s99.csv", cold_pred
     return fig
 
 
+def plot_warm_cold_T20(pred_dir, windows=(0.25, 0.5, 1), T=20, save_dir=None,
+                       save_name="warm_vs_cold_T20.png", every=10):
+    """Error over time at T with and without the warm start, one panel per window length."""
+    fig, axes = plt.subplots(1, len(windows), figsize=(4.6 * len(windows), 3.8), sharey=True, squeeze=False)
+    for ax, w in zip(axes[0], windows):
+        for f, c, lab in [(f"pred_tm_T{T:g}_w{w:g}_s99.csv", "#c23b8a", "warm start"),
+                          (f"pred_tm_T{T:g}_w{w:g}cold_s99.csv", "#2e9e6b", "no warm start")]:
+            path = os.path.join(pred_dir, f)
+            if not os.path.exists(path):
+                continue
+            d = pd.read_csv(path)
+            end = d.t.iloc[-1]
+            dd = d.iloc[::every]
+            ax.plot(dd.t, dd.err_3d + 1e-12, color=c, lw=1, label=f"{lab}" + ("" if end >= T - 1e-9 else f" (stopped at t = {end:g})"))
+        ax.set_yscale("log")
+        ax.set_ylim(1e-8, 1e2)
+        ax.set_xlim(0, T)
+        ax.axhline(1e-4, color="gray", ls="--", lw=1)
+        ax.set_title(f"{w:g}-unit windows", fontsize=10)
+        ax.set_xlabel("t")
+        ax.legend(frameon=False, fontsize=8, loc="upper left")
+    axes[0][0].set_ylabel("3D distance error")
+    fig.suptitle(f"T = {T:g}, data everywhere: with and without the warm start", fontsize=11)
+    fig.tight_layout()
+    if save_dir:
+        fig.savefig(os.path.join(save_dir, save_name), dpi=150, bbox_inches="tight")
+    return fig
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--pred-dir", required=True, help="folder with pred_T*_s99.csv and pred_tm_T*_s99.csv")

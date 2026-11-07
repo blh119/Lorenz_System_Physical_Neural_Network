@@ -416,6 +416,70 @@ def plot_warm_cold_T20(pred_dir, windows=(0.25, 0.5, 1), T=20, save_dir=None,
     return fig
 
 
+SPARSE_RUNS = [("gap_1", "5% of the time (one piece per unit)"), ("gap_1.5", "one piece every 1.5 units"),
+               ("gap_2", "one piece every 2 units"), ("gap_3", "one piece every 3 units"),
+               ("early_only", "data on [0, 1] only")]
+
+
+def plot_sparse_cold(pred_dir, T=10, runs=SPARSE_RUNS, save_dir=None, save_name="sparse_cold_T10.png", every=10):
+    """Error over time for the fresh-weight sparse-data runs (1-unit windows), with the data pieces shaded."""
+    colors = ["#2a78d6", "#2e9e6b", "#8e5cc9", "#eb6834", "#c23b8a"]
+    fig, ax = plt.subplots(figsize=(9, 4.2))
+    for (name, lab), c in zip(runs, colors):
+        path = os.path.join(pred_dir, f"pred_sparse_cold_{name}_T{T:g}_s99.csv")
+        if not os.path.exists(path):
+            continue
+        d = pd.read_csv(path).iloc[::every]
+        ax.plot(d.t, d.err_3d + 1e-12, color=c, lw=1, label=lab)
+    ax.set_yscale("log")
+    ax.set_ylim(1e-8, 1e-1)
+    ax.set_xlim(0, T)
+    ax.axhline(1e-4, color="gray", ls="--", lw=1)
+    ax.set_xlabel("t")
+    ax.set_ylabel("3D distance error")
+    ax.set_title(f"T = {T:g}, 1-unit windows, no warm start: sparse data", fontsize=11)
+    ax.legend(frameon=False, fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=3)
+    fig.tight_layout()
+    if save_dir:
+        fig.savefig(os.path.join(save_dir, save_name), dpi=150, bbox_inches="tight")
+    return fig
+
+
+def plot_early_only_T20(pred_dir, save_dir=None, save_name="early_only_T20.png", every=10):
+    """Data on [0, 1] only, physics alone after: the T = 10 and T = 20 runs, error (top) and x (bottom)."""
+    runs = [("pred_sparse_cold_early_only_T10_s99.csv", "#2a78d6", "T = 10 run"),
+            ("pred_sparse_cold_early_only_T20_s99.csv", "#c23b8a", "T = 20 run")]
+    fig, (a1, a2) = plt.subplots(2, 1, figsize=(9, 6), sharex=True)
+    ref = None
+    for f, c, lab in runs:
+        path = os.path.join(pred_dir, f)
+        if not os.path.exists(path):
+            continue
+        d = pd.read_csv(path)
+        dd = d.iloc[::every]
+        a1.plot(dd.t, dd.err_3d + 1e-12, color=c, lw=1, label=lab)
+        a2.plot(dd.t, dd.x_pinn, color=c, lw=1, ls="--", label=f"PINN, {lab}")
+        if ref is None or d.t.iloc[-1] > ref.t.iloc[-1]:
+            ref = dd
+    a2.plot(ref.t, ref.x_pos, color="black", lw=0.8, label="reference", zorder=0)
+    for ax in (a1, a2):
+        ax.axvspan(0, 1, color="gray", alpha=0.15, lw=0)
+        ax.set_xlim(0, 20)
+    a1.set_yscale("log")
+    a1.set_ylim(1e-8, 1e2)
+    a1.axhline(1e-4, color="gray", ls="--", lw=1)
+    a1.set_ylabel("3D distance error")
+    a1.legend(frameon=False, fontsize=8, loc="upper left")
+    a2.set_ylabel("x")
+    a2.set_xlabel("t   (shaded: the only reference data)")
+    a2.legend(frameon=False, fontsize=8, loc="lower left", ncol=3)
+    fig.suptitle("Data on [0, 1] only, 1-unit windows, no warm start", fontsize=11)
+    fig.tight_layout()
+    if save_dir:
+        fig.savefig(os.path.join(save_dir, save_name), dpi=150, bbox_inches="tight")
+    return fig
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--pred-dir", required=True, help="folder with pred_T*_s99.csv and pred_tm_T*_s99.csv")
@@ -439,4 +503,7 @@ if __name__ == "__main__":
     if any(f.startswith("pred_tm_T10_w") for f in os.listdir(a.pred_dir)):
         plot_window_lengths(a.pred_dir, T=10, save_dir=a.save_dir)
         plot_window_states(a.pred_dir, T=10, save_dir=a.save_dir)
+    if any(f.startswith("pred_sparse_cold_") for f in os.listdir(a.pred_dir)):
+        plot_sparse_cold(a.pred_dir, save_dir=a.save_dir)
+        plot_early_only_T20(a.pred_dir, save_dir=a.save_dir)
     print("plots written to", a.save_dir)

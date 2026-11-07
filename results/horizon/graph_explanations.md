@@ -332,3 +332,33 @@ The relative L2 values on the graph are only over the part each run reached, so 
   - the no-warm-start runs at 1.5 and 2-unit windows
   - other seeds
   - longer T (40 or more), to find where chaos rather than training sets the limit
+
+---
+
+## 9. Sparse data with fresh weights
+
+![Sparse data at T = 10, no warm start](plots/sparse_cold_T10.png)
+
+Each data piece is 0.05 units long, the first sits at t = 0.5, windows are 1 unit with fresh weights, and a run stops if a window ends more than 1 off.
+
+| Data layout | Warm start, T = 5: held-out | Fresh weights, T = 10: reached | Held-out error | Worst 3D error | Largest hand-off | Time |
+|---|---|---|---|---|---|---|
+| One piece per unit (5%) | 1.0e-5 | t = 10 | 1.8e-6 | 3.3e-4 | 1.1e-4 | 92 min |
+| One piece every 1.5 units | 2.3e-3 | t = 10 | 4.4e-6 | 6.2e-4 | 3.8e-4 | 83 min |
+| One piece every 2 units | 0.30 | t = 10 | 3.4e-6 | 3.7e-4 | 1.5e-4 | 77 min |
+| One piece every 3 units | not run | t = 10 | 3.8e-6 | 5.6e-4 | 2.1e-4 | 82 min |
+| Data on [0, 1] only | 0.59 | t = 10 | 6.3e-5 | 6.7e-3 | 4.2e-3 | 91 min |
+
+- **Every layout reached t = 10.** With the warm start, gaps of 1.5 or 2 units had failed by T = 5.
+- **Windows with no data still train well** when their starting point is right.
+- **Data on [0, 1] only:** the error grew from about 4e-5 to 4e-3 over nine units with no data, about 1.7× per unit. That fits chaos amplifying small errors, not a window failing (inferred).
+
+![Data on [0, 1] only, T = 10 and T = 20](plots/early_only_T20.png)
+
+- **At T = 20 it held to about t = 12.** Error passed 1e-2 at t = 5.1, 0.1 at t = 9.5 and 1 at t = 12.0. The run stopped after the window from 12 to 13 ended 17 off.
+- **Two windows did the damage:**
+  - Window 5–6 trained poorly (physics loss 1.5e-3 against about 1e-6 elsewhere) and added about 0.08 of error, which chaos grew to about 0.4 by t = 11.
+  - Window 12–13 then didn't train at all. Its loss stuck at 1.7 and its prediction is nearly a straight line.
+- The T = 10 run trained window 5–6 cleanly. T sets the physics weight, so the two runs don't train identically even with the same seed.
+- Without the weak window, the T = 10 growth rate would reach 0.1 around t = 15–16 (extrapolated).
+- **Conclusion:** with fresh weights, data is needed far less often than section 3 suggested. One short piece every 3 units held about 1e-6 over T = 10. With no data after t = 1, physics alone went to about t = 12. Retraining weak windows automatically is the obvious next fix (untested).

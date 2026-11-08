@@ -74,17 +74,20 @@ class Lorenz_Time_Marching:
     n_sample        : data points per unit of time (200 matches the tuned run)
     warm_start      : start each window's network from the previous window's weights
     stop_above      : stop early once a window's end error (3D distance) exceeds this
+    retry_above     : retrain a window (new seed) if its final total loss is above this
+    retries         : how many times to retrain such a window; the lowest-loss attempt is kept
     """
 
     def __init__(self, T=3.0, window=1.0, data_intervals=None, n_sample=200, seed=99,
                  epochs=TUNED_EPOCHS, lbfgs_iters=5000, warm_start=True, print_every=5000,
-                 stop_above=None):
+                 stop_above=None, retry_above=None, retries=2):
         self.T, self.window = T, window
         self.data_intervals = [(0.0, T)] if data_intervals is None else sorted(data_intervals)
         self.n_sample, self.seed = n_sample, seed
         self.epochs, self.lbfgs_iters = epochs, lbfgs_iters
         self.warm_start, self.print_every = warm_start, print_every
         self.stop_above = stop_above  # stop once a window ends this far off (saves time on failed runs)
+        self.retry_above, self.retries = retry_above, retries  # retrain a window whose final loss stays high
         self.dt = TUNED["dt"][0]
         self.window_rows = []
 
@@ -101,6 +104,18 @@ class Lorenz_Time_Marching:
             if b2 - a2 > 1e-9:
                 out.append((round(a2 - s, 10), round(b2 - s, 10)))
         return out
+
+    def train_window(self, wdf, local, weights, L, ic, seed):
+        """Train one window's network from its starting point ic."""
+        w = Lorenz_Window(wdf, local, init_weights=weights if self.warm_start else None,
+                          T=L, x0=ic[0], y0=ic[1], z0=ic[2],
+                          dt=[self.dt], method="rk4", optimizer=TUNED["optimizer"],
+                          learning_rate=TUNED["learning_rate"], lbfgs_iters=self.lbfgs_iters,
+                          seed=seed, n_colloc=int(round(2000 * L)),
+                          n_colloc_lbfgs=int(round(4000 * L)))
+        w.pinn_pipeline(dt=self.dt, n_sample=max(2, int(round(self.n_sample * L))),
+                        epochs=self.epochs, print_every=self.print_every)
+        return w
 
     def run(self):
         start_time = time.time()
@@ -119,14 +134,19 @@ class Lorenz_Time_Marching:
             local = self.local_intervals(s, e)
 
             print(f"--- window {k + 1}/{n_windows}: [{s:g}, {e:g}], data pieces {local}")
-            w = Lorenz_Window(wdf, local, init_weights=weights if self.warm_start else None,
-                              T=L, x0=ic[0], y0=ic[1], z0=ic[2],
-                              dt=[self.dt], method="rk4", optimizer=TUNED["optimizer"],
-                              learning_rate=TUNED["learning_rate"], lbfgs_iters=self.lbfgs_iters,
-                              seed=self.seed, n_colloc=int(round(2000 * L)),
-                              n_colloc_lbfgs=int(round(4000 * L)))
-            w.pinn_pipeline(dt=self.dt, n_sample=max(2, int(round(self.n_sample * L))),
-                            epochs=self.epochs, print_every=self.print_every)
+            w, tries = None, 0
+            while True:
+                cand = self.train_window(wdf, local, weights, L, ic, seed=self.seed + 1000 * tries)
+                loss = cand.loss_history[-1]["total"]
+                if w is None or loss < w.loss_history[-1]["total"]:
+                    w = cand
+                if self.retry_above is None or loss <= self.retry_above or tries >= self.retries:
+                    break
+                tries += 1
+                print(f"--- window {k + 1}: final loss {loss:.2e} > {self.retry_above:g}, "
+                      f"retry {tries}/{self.retries} with seed {self.seed + 1000 * tries}")
+            if tries:
+                print(f"--- window {k + 1}: kept the run with final loss {w.loss_history[-1]['total']:.2e}")
 
             p = w.pred_df.copy()
             p["t"] = p["t"] + s
@@ -137,7 +157,7 @@ class Lorenz_Time_Marching:
             weights = w.model.get_weights()
             self.window_rows.append({"window": k, "start": s, "end": e,
                                      "n_data": len(w.sample_list[0]) if w.has_data else 0,
-                                     "final_loss": w.loss_history[-1]["total"],
+                                     "final_loss": w.loss_history[-1]["total"], "retries": tries,
                                      "end_err_3d": float(last["err_3d"])})
             if self.stop_above is not None and float(last["err_3d"]) > self.stop_above:
                 print(f"--- stopping: window {k + 1} ended {float(last['err_3d']):.2e} off (> {self.stop_above:g})")
@@ -167,7 +187,8 @@ class Lorenz_Time_Marching:
                "window": self.window, "seed": self.seed,
                "intervals": "; ".join(f"{a:g}-{b:g}" for a, b in self.data_intervals),
                "data_length": round(sum(b - a for a, b in self.data_intervals), 10),
-               "epochs": self.epochs, "lbfgs_cap": self.lbfgs_iters, "warm_start": self.warm_start}
+               "epochs": self.epochs, "lbfgs_cap": self.lbfgs_iters, "warm_start": self.warm_start,
+               "retry_above": self.retry_above, "retries_used": sum(w.get("retries", 0) for w in self.window_rows)}
         for name, mask in [("full", np.ones_like(data)), ("data", data), ("held_out", ~data)]:
             row[f"{name}_rel_l2"], row[f"{name}_max_abs"] = self.region(mask)
         for wr in self.window_rows:
@@ -186,6 +207,8 @@ if __name__ == "__main__":
     p.add_argument("--lbfgs", type=int, default=5000)
     p.add_argument("--no-warm-start", action="store_true")
     p.add_argument("--stop-above", type=float, help="stop once a window ends this far off the reference")
+    p.add_argument("--retry-above", type=float, help="retrain a window whose final loss is above this")
+    p.add_argument("--retries", type=int, default=2, help="max retrains per window (with --retry-above)")
     p.add_argument("--name", default="", help="label stored in the CSV row")
     p.add_argument("--csv", help="append the summary row to this CSV")
     p.add_argument("--save-predictions", help="write the full prediction table here")
@@ -193,6 +216,7 @@ if __name__ == "__main__":
 
     tm = Lorenz_Time_Marching(T=a.T, window=a.window, seed=a.seed, epochs=a.epochs,
                               lbfgs_iters=a.lbfgs, warm_start=not a.no_warm_start, stop_above=a.stop_above,
+                              retry_above=a.retry_above, retries=a.retries,
                               data_intervals=parse_intervals(a.intervals) if a.intervals else None)
     row = {"name": a.name, **tm.run()}
     print("ROW", json.dumps(row))

@@ -360,5 +360,8 @@ Each data piece is 0.05 units long, the first sits at t = 0.5, windows are 1 uni
   - Window 5–6 trained poorly (physics loss 1.5e-3 against about 1e-6 elsewhere) and added about 0.08 of error, which chaos grew to about 0.4 by t = 11.
   - Window 12–13 then didn't train at all. Its loss stuck at 1.7 and its prediction is nearly a straight line.
 - The T = 10 run trained window 5–6 cleanly. T sets the physics weight, so the two runs don't train identically even with the same seed.
-- Without the weak window, the T = 10 growth rate would reach 0.1 around t = 15–16 (extrapolated).
-- **Conclusion:** with fresh weights, data is needed far less often than section 3 suggested. One short piece every 3 units held about 1e-6 over T = 10. With no data after t = 1, physics alone went to about t = 12. Retraining weak windows automatically is the obvious next fix (untested).
+- **Rerun with automatic retraining** (`--retry-above 1e-4 --retries 2`: retrain a window with a new seed, up to twice, if its final loss stays above 1e-4; keep the best try):
+  - This time window 5–6 trained cleanly on the first try (training is not exactly repeatable between runs). The error stayed under 5.2e-3 all the way to t = 12.
+  - **Window 12–13 still failed on all three seeds** (final losses 1.75, 0.38, 0.38), even though it now started only about 5e-3 off. So a bad start was not the cause.
+  - That window holds the deepest dip so far (x falls to about −14) just before the wing switch at 13.55. Without data, a 1-unit network can't find it. This is the same kind of stuck training as one network at T = 3. With data everywhere, 1-unit windows passed it (section 8).
+- **Conclusion:** with fresh weights, data is needed far less often than section 3 suggested. One short piece every 3 units held about 1e-6 over T = 10. With no data after t = 1, physics alone reached t = 12 on two separate runs. The limit there is one hard stretch of the path, not chaos, and new seeds don't fix it. Shorter windows or one data piece in that stretch are the likely fixes (untested).

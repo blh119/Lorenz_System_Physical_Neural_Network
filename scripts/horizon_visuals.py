@@ -10,6 +10,8 @@ x_err, y_err, z_err, err_3d), so nothing has to be retrained to make them.
     hv.plot_states_compare("pred_T3_s99.csv", "pred_tm_T3_s99.csv", T=3)
     hv.plot_errors_compare("pred_T3_s99.csv", "pred_tm_T3_s99.csv", T=3)
     hv.plot_unit_importance(T=5)
+    if all(os.path.exists(os.path.join(a.pred_dir, f"pred_T{T:g}_s99.csv")) for T in (1, 1.5, 2, 2.5, 3)):
+        plot_one_network(a.pred_dir, save_dir=a.save_dir)
     plot_unit_placement("unit_placement.csv", save_dir="results/horizon/plots")
     plot_window_lengths("results/horizon", T=10, save_dir="results/horizon/plots")
 
@@ -481,6 +483,55 @@ def plot_early_only_T20(pred_dir, save_dir=None, save_name="early_only_T20.png",
     return fig
 
 
+def plot_one_network(pred_dir, Ts=(1, 1.5, 2, 2.5, 3), save_dir=None, save_name="one_network_states.png",
+                     err_name="one_network_errors.png"):
+    """One network trained on all of [0, T]: x, y, z against the reference for each T, plus error over time."""
+    cols = {"x": "#2a78d6", "y": "#eb6834", "z": "#2e9e6b"}
+    fig, axes = plt.subplots(len(Ts), 3, figsize=(12, 2.1 * len(Ts)), sharex=True, squeeze=False)
+    rel = {}
+    for r, T in enumerate(Ts):
+        d = pd.read_csv(os.path.join(pred_dir, f"pred_T{T:g}_s99.csv"))
+        ref = np.sqrt((d[["x_pos", "y_pos", "z_pos"]] ** 2).sum(axis=1))
+        rel[T] = float(np.linalg.norm(d.err_3d) / np.linalg.norm(ref))
+        for c, v in enumerate("xyz"):
+            ax = axes[r][c]
+            ax.plot(d.t, d[f"{v}_pos"], color="black", lw=1.3, label="reference")
+            ax.plot(d.t, d[f"{v}_pinn"], color=cols[v], lw=1.3, ls="--", label="one network")
+            ax.axvline(T, color="gray", ls=":", lw=1)
+            if r == 0:
+                ax.set_title(v, fontsize=11)
+            if c == 0:
+                ax.set_ylabel(f"T = {T:g}\nrel. error {rel[T]:.0e}", fontsize=9)
+            if r == len(Ts) - 1:
+                ax.set_xlabel("t")
+    axes[0][2].legend(frameon=False, fontsize=8, loc="upper right")
+    for ax in axes.flat:
+        ax.set_xlim(0, max(Ts))
+    fig.suptitle("One network trained on all of [0, T] at once (data at every point; dotted line: end of its span)",
+                 fontsize=11)
+    fig.tight_layout()
+    if save_dir:
+        fig.savefig(os.path.join(save_dir, save_name), dpi=150, bbox_inches="tight")
+
+    fig2, ax = plt.subplots(figsize=(9, 4))
+    shades = ["#9ec5f0", "#5a9be0", "#2a78d6", "#1a4f99", "#c23b8a"]
+    for T, c in zip(Ts, shades):
+        d = pd.read_csv(os.path.join(pred_dir, f"pred_T{T:g}_s99.csv")).iloc[::5]
+        ax.plot(d.t, d.err_3d + 1e-12, color=c, lw=1.1, label=f"T = {T:g} (rel. error {rel[T]:.1e})")
+    ax.set_yscale("log")
+    ax.set_ylim(1e-7, 1e2)
+    ax.set_xlim(0, max(Ts))
+    ax.axhline(1e-4, color="gray", ls="--", lw=1)
+    ax.set_xlabel("t")
+    ax.set_ylabel("3D distance error")
+    ax.set_title("One network on [0, T]: error over time", fontsize=11)
+    ax.legend(frameon=False, fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=3)
+    fig2.tight_layout()
+    if save_dir:
+        fig2.savefig(os.path.join(save_dir, err_name), dpi=150, bbox_inches="tight")
+    return fig, fig2, rel
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--pred-dir", required=True, help="folder with pred_T*_s99.csv and pred_tm_T*_s99.csv")
@@ -498,6 +549,8 @@ if __name__ == "__main__":
             hv.plot_errors_compare(one, tm, T)
             plt.close("all")
     hv.plot_unit_importance(T=5)
+    if all(os.path.exists(os.path.join(a.pred_dir, f"pred_T{T:g}_s99.csv")) for T in (1, 1.5, 2, 2.5, 3)):
+        plot_one_network(a.pred_dir, save_dir=a.save_dir)
     placement = os.path.join(a.pred_dir, "unit_placement.csv")
     if os.path.exists(placement):
         plot_unit_placement(placement, save_dir=a.save_dir)

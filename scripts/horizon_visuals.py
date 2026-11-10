@@ -450,8 +450,7 @@ def plot_sparse_cold(pred_dir, T=10, runs=SPARSE_RUNS, save_dir=None, save_name=
 def plot_early_only_T20(pred_dir, save_dir=None, save_name="early_only_T20.png", every=10):
     """Data on [0, 1] only, physics alone after: the T = 10 and T = 20 runs, error (top) and x (bottom)."""
     runs = [("pred_sparse_cold_early_only_T10_s99.csv", "#2a78d6", "T = 10 run"),
-            ("pred_sparse_cold_early_only_T20_s99.csv", "#c23b8a", "T = 20 run"),
-            ("pred_sparse_retry_early_only_T20_s99.csv", "#eb6834", "T = 20 rerun, weak windows retrained")]
+            ("pred_sparse_cold_early_only_T20_s99.csv", "#c23b8a", "T = 20 run")]
     fig, (a1, a2) = plt.subplots(2, 1, figsize=(9, 6), sharex=True)
     ref = None
     for f, c, lab in runs:
@@ -475,7 +474,7 @@ def plot_early_only_T20(pred_dir, save_dir=None, save_name="early_only_T20.png",
     a1.legend(frameon=False, fontsize=8, loc="upper left")
     a2.set_ylabel("x")
     a2.set_xlabel("t   (shaded: the only reference data)")
-    a2.legend(frameon=False, fontsize=8, loc="lower left", ncol=2)
+    a2.legend(frameon=False, fontsize=8, loc="lower left", ncol=3)
     fig.suptitle("Data on [0, 1] only, 1-unit windows, no warm start", fontsize=11)
     fig.tight_layout()
     if save_dir:

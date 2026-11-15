@@ -63,6 +63,26 @@ class Lorenz_Window(Lorenz_Interval_Validation):
         super().build_network(initial_params)
         if self.init_weights is not None:
             self.model.set_weights(self.init_weights)
+        # The weights this window starts training from (copied or fresh), for the handoff study.
+        self.start_weights = self.model.get_weights()
+
+    # Adam steps after which a copy of the weights is kept (see snapshots).
+    SNAP_EPOCHS = (1, 10, 100, 1000, 2000)
+
+    def build_optimizer(self, epochs):
+        """Same optimizer as the base class; also keeps copies of the weights
+        after the Adam steps in SNAP_EPOCHS, in self.snapshots[epoch]."""
+        super().build_optimizer(epochs)
+        compiled, self.snapshots, step = self.train_step, {}, [0]
+
+        def train_step():
+            out = compiled()
+            step[0] += 1
+            if step[0] in self.SNAP_EPOCHS:
+                self.snapshots[step[0]] = self.model.get_weights()
+            return out
+
+        self.train_step = train_step
 
 
 class Lorenz_Time_Marching:
@@ -76,11 +96,14 @@ class Lorenz_Time_Marching:
     stop_above      : stop early once a window's end error (3D distance) exceeds this
     retry_above     : retrain a window (new seed) if its final total loss is above this
     retries         : how many times to retrain such a window; the lowest-loss attempt is kept
+    save_dir        : if set, every window writes window_NN.npz (its starting, end-of-Adam snapshot
+                      and final weights, plus its start point, length and output scale) and
+                      losses_NN.csv (its loss history) here, for handoff_analysis.py
     """
 
     def __init__(self, T=3.0, window=1.0, data_intervals=None, n_sample=200, seed=99,
                  epochs=TUNED_EPOCHS, lbfgs_iters=5000, warm_start=True, print_every=5000,
-                 stop_above=None, retry_above=None, retries=2):
+                 stop_above=None, retry_above=None, retries=2, save_dir=None):
         self.T, self.window = T, window
         self.data_intervals = [(0.0, T)] if data_intervals is None else sorted(data_intervals)
         self.n_sample, self.seed = n_sample, seed
@@ -88,6 +111,9 @@ class Lorenz_Time_Marching:
         self.warm_start, self.print_every = warm_start, print_every
         self.stop_above = stop_above  # stop once a window ends this far off (saves time on failed runs)
         self.retry_above, self.retries = retry_above, retries  # retrain a window whose final loss stays high
+        self.save_dir = save_dir
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
         self.dt = TUNED["dt"][0]
         self.window_rows = []
 
@@ -148,6 +174,9 @@ class Lorenz_Time_Marching:
             if tries:
                 print(f"--- window {k + 1}: kept the run with final loss {w.loss_history[-1]['total']:.2e}")
 
+            if self.save_dir:
+                self.save_window(k, s, e, ic, w)
+
             p = w.pred_df.copy()
             p["t"] = p["t"] + s
             p["window"] = k
@@ -165,6 +194,17 @@ class Lorenz_Time_Marching:
 
         self.pred_df = pd.concat(preds).reset_index(drop=True)
         return self.summary(time.time() - start_time)
+
+    def save_window(self, k, s, e, ic, w):
+        """Write window k's weights and losses (ic is the point the window started from)."""
+        arrays = {"start": s, "end": e, "ic": np.array(ic), "state_std": w.state_std.numpy().ravel(),
+                  "warm_start": self.warm_start}
+        for name, weights in [("w_start", w.start_weights), ("w_final", w.model.get_weights()),
+                              *[(f"w_epoch{n}", ws) for n, ws in w.snapshots.items()]]:
+            for i, a in enumerate(weights):
+                arrays[f"{name}_{i}"] = a
+        np.savez(os.path.join(self.save_dir, f"window_{k:02d}.npz"), **arrays)
+        pd.DataFrame(w.loss_history).to_csv(os.path.join(self.save_dir, f"losses_{k:02d}.csv"), index=False)
 
     def in_data(self, t):
         mask = np.zeros(len(t), dtype=bool)
@@ -212,11 +252,12 @@ if __name__ == "__main__":
     p.add_argument("--name", default="", help="label stored in the CSV row")
     p.add_argument("--csv", help="append the summary row to this CSV")
     p.add_argument("--save-predictions", help="write the full prediction table here")
+    p.add_argument("--save-dir", help="write each window's weights and loss history here")
     a = p.parse_args()
 
     tm = Lorenz_Time_Marching(T=a.T, window=a.window, seed=a.seed, epochs=a.epochs,
                               lbfgs_iters=a.lbfgs, warm_start=not a.no_warm_start, stop_above=a.stop_above,
-                              retry_above=a.retry_above, retries=a.retries,
+                              retry_above=a.retry_above, retries=a.retries, save_dir=a.save_dir,
                               data_intervals=parse_intervals(a.intervals) if a.intervals else None)
     row = {"name": a.name, **tm.run()}
     print("ROW", json.dumps(row))

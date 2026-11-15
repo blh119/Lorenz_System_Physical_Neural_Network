@@ -129,7 +129,7 @@ def _handoffs(ax, windows, every=1):
 
 def _save(fig, out, name):
     fig.tight_layout()
-    fig.savefig(os.path.join(out, name), dpi=150)
+    fig.savefig(os.path.join(out, name), dpi=150, bbox_inches="tight")
     plt.close(fig)
     print("saved", name)
 
@@ -237,20 +237,25 @@ def plot_unit_health(summ, out):
                     color=RUNS[name]["color"], label=name)
         a1.set_title(f"hidden layer {j}", fontsize=10)
         a2.set_xlabel("window start")
-        a2.set_ylim(0, 65)
+        a2.set_ylim(0, max(12, summ[f"working_units_L{j}"].max() + 1))
         for a in (a1, a2):
             a.grid(alpha=0.25)
     axes[0, 0].set_ylabel("% saturated (|input| > 2)")
-    axes[1, 0].set_ylabel("working units (of 64)")
+    axes[1, 0].set_ylabel("distinct unit shapes (rank)")
     axes[0, 0].legend(fontsize=8)
     fig.suptitle("Health of the hidden units at the end of each window", y=1.01)
     _save(fig, out, "unit_health.png")
 
 
-def plot_movement(summ, out):
-    fig, (a1, a2) = plt.subplots(1, 2, figsize=(13, 4.6))
+def plot_movement(summ, out, n_weights):
+    fig, (a1, a2, a3) = plt.subplots(1, 3, figsize=(17, 4.6))
     for name in RUNS:
         s = summ[summ.run == name]
+        # Adam's first step moves every weight by about the learning rate (1e-2) unless its
+        # gradient is close to zero, so a full first step has length 1e-2 * sqrt(n_weights).
+        full = 1e-2 * np.sqrt(n_weights)
+        a3.plot(s["start"], s["moved_epoch1"] / full, marker="o", ms=4, lw=1.2,
+                color=RUNS[name]["color"], label=name)
         a1.plot(s["start"], s["moved"], marker="o", ms=4, lw=1.2, color=RUNS[name]["color"],
                 label=RUNS[name]["label"])
         steps = [c for c in ["moved_epoch1", "moved_epoch10", "moved_epoch100", "moved_epoch1000",
@@ -266,7 +271,12 @@ def plot_movement(summ, out):
     a2.set_ylabel("distance so far / total distance")
     a2.set_title("When the moving happens (median over windows)", fontsize=11)
     a2.legend(fontsize=8)
-    for a in (a1, a2):
+    a3.set_title("Size of Adam's first step (1 = every weight moves)", fontsize=11)
+    a3.set_xlabel("window start")
+    a3.set_ylabel("first step / full first step")
+    a3.set_ylim(0, 1.1)
+    a3.legend(fontsize=8)
+    for a in (a1, a2, a3):
         a.grid(alpha=0.25)
     _save(fig, out, "weight_movement.png")
 
@@ -296,4 +306,4 @@ if __name__ == "__main__":
     plot_starting_guess(runs, preds, a.out, picks)
     plot_weight_size(summ, a.out)
     plot_unit_health(summ, a.out)
-    plot_movement(summ, a.out)
+    plot_movement(summ, a.out, len(flat(runs["warm"][0]["W"]["final"])))

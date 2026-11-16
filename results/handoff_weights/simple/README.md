@@ -4,6 +4,10 @@ Same runs as `../handoff_errors.png`: T = 5, 20 windows of 0.25 time units (hand
 
 **The number.** At each handoff, take every weight and bias in the 4 hidden layers of 64 units (12,736 numbers; the output layer is left out) from the window's final network, and compute their RMS. Divide by the RMS of the random network the run started from (0.123). So 1.0 means "the same size as a newly made network" and 4.0 means "four times bigger". Both graphs use the same y-axis so they can be compared directly.
 
+## `weight_rms_both.png` (both on one graph)
+
+The two graphs below drawn on the same axes: warm start in pink, no warm start in green. The red X's and the circled last good handoff belong to the warm run. The lines stay together until t = 0.75 and then split apart for good.
+
 ## `weight_rms_warm.png` (warm start)
 
 The weights grow at every handoff and never come back down: 2.09 at t = 1, 2.81 at t = 2, 3.33 at t = 3, 4.13 at t = 4, and 4.35 at t = 4.25, the **last good handoff** (circled). The next window (4.25 to 4.5) went off the rails, ending 2.8 away from the reference; those windows are the red X's, where the size jumps to 6.45 by t = 5.

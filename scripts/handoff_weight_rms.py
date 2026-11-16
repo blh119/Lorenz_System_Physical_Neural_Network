@@ -6,6 +6,7 @@ Reads two time-marching runs saved with --save-dir (one warm, one with
 
     weight_rms_warm.png    warm start (each window starts from the previous window's weights)
     weight_rms_fresh.png   a new random network in every window
+    weight_rms_both.png    both on one graph
 
 The number is the RMS of every weight and bias in the 4 hidden layers of 64
 units (the output layer is left out), divided by the RMS of the random network
@@ -94,6 +95,47 @@ def draw(df, base, title, color, path, ymax, fail_err):
     plt.close(fig)
 
 
+def draw_both(runs, base, path, ymax, fail_err):
+    """Both runs on one axes. runs: list of (df, label, color, label_offset_pts)."""
+    fig, ax = plt.subplots(figsize=(11, 4.8), dpi=150)
+    t_all = np.r_[0.0, runs[0][0]["handoff_t"].values]
+    for tv in t_all[1:]:
+        ax.axvline(tv, color="0.5", lw=0.5, ls=":", zorder=0)
+    ax.axhline(1.0, color="0.5", lw=1, ls="--")
+    ax.text(t_all[-1] + 0.08, 1.0, "new random\nnetwork", va="center", fontsize=8, color="0.35")
+    marked = False
+    for df, label, color, dy in runs:
+        t = np.r_[0.0, df["handoff_t"].values]
+        y = np.r_[df["rms_start"].iloc[0], df["rms_handoff"].values] / base
+        bad = np.r_[False, df["handoff_err_3d"].values > fail_err]
+        ax.plot(t, y, color=color, lw=2, zorder=2, label=label)
+        ax.scatter(t[~bad], y[~bad], color=color, s=32, zorder=3)
+        show = [ti == int(ti) and ti > 0 for ti in t]
+        if bad.any():
+            first = int(np.argmax(bad))
+            ax.scatter(t[bad], y[bad], color="#d62728", s=60, marker="X", zorder=4,
+                       label=None if marked else "window went off the rails")
+            ax.scatter([t[first - 1]], [y[first - 1]], s=140, facecolors="none", edgecolors="black",
+                       lw=1.5, zorder=4, label=f"last good handoff (t = {t[first - 1]:g})")
+            show[first - 1] = True
+            marked = True
+        for ti, yi, sh in zip(t, y, show):
+            if sh:
+                ax.annotate(f"{yi:.2f}", (ti, yi), textcoords="offset points", xytext=(0, dy),
+                            ha="center", va="center", fontsize=9, color=color)
+    ax.set_xticks(np.arange(0, t_all[-1] + 0.01, 1.0))
+    ax.set_xlim(-0.2, t_all[-1] + 0.45)
+    ax.set_ylim(0, ymax)
+    ax.set_xlabel("t (dotted lines are handoffs)")
+    ax.set_ylabel("hidden-weight size\n(RMS, 1 = new random network)")
+    ax.set_title("Hidden-weight size at each handoff: warm start vs a new network every window", fontsize=12)
+    ax.legend(loc="upper left", frameon=False, fontsize=9)
+    ax.spines[["top", "right"]].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--warm", required=True)
@@ -114,6 +156,9 @@ def main():
          "#c23b8a", os.path.join(a.out, "weight_rms_warm.png"), ymax, a.fail_err)
     draw(fresh, base, "No warm start: a new random network in every window",
          "#2e9e6b", os.path.join(a.out, "weight_rms_fresh.png"), ymax, a.fail_err)
+    draw_both([(warm, "warm start (weights copied from the previous window)", "#c23b8a", 11),
+               (fresh, "no warm start (new random network every window)", "#2e9e6b", 11)],
+              base, os.path.join(a.out, "weight_rms_both.png"), ymax, a.fail_err)
     out = pd.concat([warm.assign(run="warm"), fresh.assign(run="fresh")])
     out.to_csv(os.path.join(a.out, "weight_rms.csv"), index=False)
     print(out.to_string(index=False))

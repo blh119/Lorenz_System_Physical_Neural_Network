@@ -1,4 +1,6 @@
 """Words and tables for report Section 21 (used by pct_report_section.py)."""
+import re
+
 import numpy as np
 import pandas as pd
 
@@ -21,7 +23,7 @@ def story_for(base, ex, filled, figs, k):
               "that still can't be filled as a failed run, with the reason. Two things were tried, in order. "
               "<b>More data:</b> 50% and 100% of the points at every T, with the Section 18 settings. That filled "
               "<b>no</b> new cells. <b>Longer training:</b> for the cells still empty, L-BFGS was allowed 20,000 to "
-              "100,000 steps instead of 5,000, and T = 3 was retried with other seeds. That filled 9 of the 13. "
+              "180,000 steps instead of 5,000, and T = 3 was retried with other seeds. That filled 9 of the 13. "
               "Four cells still fail: 10<super>-6</super> at T = 2.5, and 10<super>-4</super>, 10<super>-5</super> "
               "and 10<super>-6</super> at T = 3.")]
     s += [Spacer(1, 8)]
@@ -35,7 +37,7 @@ def story_for(base, ex, filled, figs, k):
             "to every printed digit.", body)]
     s += B(["<b>100% of the data</b> means every reference point: 10,001 at T = 1 up to 30,001 at T = 3.",
             "<b>L-BFGS cap.</b> Section 18 stopped L-BFGS at 5,000 steps. Here it was allowed 20,000, 50,000, "
-            "60,000 or 100,000. One detail: SciPy also stops L-BFGS after 15,000 loss evaluations, so the runs "
+            "60,000, 100,000, or up to 250,000 (stopped earlier). One detail: SciPy also stops L-BFGS after 15,000 loss evaluations, so the runs "
             "marked \"20k\" actually stopped at about 13,700 steps. The longer runs raised that limit too, and "
             "ran their full number of steps.",
             "<b>Checkpoints.</b> The cloud machine restarted once, part-way through, and three long runs were lost. "
@@ -75,6 +77,7 @@ def story_for(base, ex, filled, figs, k):
              "T1.5_pct0.25_lbfgs60000_maxfun120000", "T2_pct2_lbfgs20000", "T2_pct2_lbfgs60000_maxfun120000",
              "T2_pct0.25_lbfgs60000_maxfun120000", "T2.5_pct1_lbfgs20000", "T2.5_pct1_lbfgs50000_maxfun100000",
              "T2.5_pct1_lbfgs100000_maxfun200000", "T3_pct10_lbfgs20000", "T3_pct10_lbfgs60000_maxfun120000",
+             "T2.5_pct1_lbfgs250000_maxfun500000", "T3_pct10_lbfgs200000_maxfun400000",
              "T3_pct10_s7", "T3_pct10_s123", "T3_pct100_s7"]
     rows = [["T", "% (pts)", "Seed", "L-BFGS steps run", "Relative L2", "Hours", "Fills"]]
     fills = {"T1_pct2_lbfgs20000": "10<super>-6</super> (later beaten by 0.1%)",
@@ -89,36 +92,43 @@ def story_for(base, ex, filled, figs, k):
              "T2.5_pct1_lbfgs100000_maxfun200000": "T = 2.5, 10<super>-5</super>",
              "T3_pct10_lbfgs20000": "none",
              "T3_pct10_lbfgs60000_maxfun120000": "T = 3, 10<super>-3</super>",
+             "T2.5_pct1_lbfgs250000_maxfun500000": "none: stalled near 3.9 × 10<super>-6</super> (stopped at 180,000)",
+             "T3_pct10_lbfgs200000_maxfun400000": "none: stalled near 5 × 10<super>-4</super> (stopped at 140,000)",
              "T3_pct10_s7": "none (stuck)", "T3_pct10_s123": "none (stuck)", "T3_pct100_s7": "none (stuck)"}
     for n in order:
         if n not in set(ex["name"]):
             continue
         x = r(n)
         rows.append([f"{x['T']:g}", f"{x.pct_reference:g}% ({int(x.n_data):,})", str(int(x.seed)),
-                     f"{int(x.lbfgs_steps):,}", sci(x.rel_l2), f"{x.seconds / 3600:.1f}", fills[n]])
+                     f"{int(x.lbfgs_steps):,}", sci(x.rel_l2),
+                     "–" if pd.isna(x.seconds) else f"{x.seconds / 3600:.1f}", fills[n]])
     s += [grid(rows, [0.4 * inch, 0.9 * inch, 0.45 * inch, 1.0 * inch, 1.05 * inch, 0.5 * inch, 2.2 * inch])]
     s += [P("Every run after step 1. \"L-BFGS steps run\" is where L-BFGS actually stopped; runs with a 20,000 cap "
-            "hit SciPy's 15,000-evaluation limit first. Hours are on one CPU core, with four runs at a time.", cap)]
+            "hit SciPy's 15,000-evaluation limit first. Hours are on one CPU core, with four runs at a time. The two "
+            "longest runs continued the 100,000- and 60,000-step runs from their checkpoints and were stopped at their "
+            "last checkpoint (no hours shown: the machine restarted twice under them).", cap)]
     s += [Image(figs["steps"], width=6.5 * inch, height=6.5 * inch * 4.4 / 9)]
     s += [P("Figure 21.2. Relative L2 at each checkpoint (every 5,000 L-BFGS steps) for the long runs that saved "
             "checkpoints. Dotted lines: 10<super>-6</super> to 10<super>-2</super>; dashed: the 10<super>-4</super> "
-            "target. The T = 3 line continues past 60,000 steps in a follow-up run.", cap)]
+            "target. The T = 2.5 and T = 3 lines continue past 100,000 and 60,000 steps in the follow-up runs.", cap)]
     s += B(["<b>10<super>-6</super> is reachable up to T = 2.</b> It needed about 14,000 L-BFGS steps at T = 1, "
             "and 60,000 at T = 1.5 and 2, with very little data (10 points at T = 1, 38 at T = 1.5, 400 at T = 2). "
             "At T = 2, 0.25% (50 points) got to 1.9 × 10<super>-6</super> in the same 60,000 steps but not under "
             "10<super>-6</super>.",
-            "<b>T = 2.5 keeps improving, slowly.</b> At 1% of the points, the error went from 4.8 × 10<super>-5</super> "
+            "<b>T = 2.5 improves slowly, then stalls.</b> At 1% of the points, the error went from 4.8 × 10<super>-5</super> "
             "(about 14,000 steps) to 1.0 × 10<super>-5</super> (50,000) to 5.3 × 10<super>-6</super> (100,000): "
-            "about half for every extra 50,000 steps.",
+            "then 3.9 × 10<super>-6</super> at 180,000, where it flattened out. 10<super>-6</super> would need about "
+            "4 times less error, and the last 30,000 steps gained almost nothing.",
             "<b>T = 3 gets under 10<super>-3</super>, then stalls.</b> 10% of the points went from 7.1 × "
             "10<super>-3</super> (5,000 steps) to 2.0 × 10<super>-3</super> (14,000) to 6.7 × 10<super>-4</super> "
-            "(60,000), but between 50,000 and 75,000 steps it stayed at about 7 × 10<super>-4</super>.",
+            "(60,000) and 5.2 × 10<super>-4</super> (125,000), then wandered between 5.2 and 5.8 × 10<super>-4</super> "
+            "up to 140,000 steps. 10<super>-4</super> would need about 5 times less error.",
             "<b>Other seeds did not help T = 3.</b> Seeds 7 and 123 at 10%, and seed 7 at 100%, all got stuck at "
             "51% to 96% error. The one working T = 3 run (seed 99, 10%) is the lucky one, as Section 18 suspected."])
 
     # ---------------- 21.4 table
-    s += [PageBreak(), P("21.4 The filled-in table", h2)]
-    s += [Image(figs["table"], width=6.7 * inch, height=6.7 * inch * 931 / 1800)]
+    s += [KeepTogether([P("21.4 The filled-in table", h2),
+                        Image(figs["table"], width=6.7 * inch, height=6.7 * inch * 931 / 1800)])]
     s += [P("Figure 21.3. Smallest tested % of the reference points that reaches each level of relative L2 over "
             "[0, T]. Blue: Section 18 settings. Green: needed a longer L-BFGS cap (shown). Red: no run reached it; "
             "the best error is shown. Also saved as results/pct_sweep/pct_needed_table_filled.xlsx.", cap)]
@@ -129,7 +139,7 @@ def story_for(base, ex, filled, figs, k):
     rows = [["T", "Level", "Best run", "Why it failed"]]
     for x in fail.itertuples():
         rows.append([f"{x.T:g}", x.level.replace("≤ 1e-", "&lt;= 10<super>-") + "</super>", f"{sci(x.rel_l2)}<br/>({x.run})",
-                     x.reason.replace(" 1e-4", " 10<super>-4</super>").replace("e-6", " × 10<super>-6</super>").replace("e-4", " × 10<super>-4</super>")])
+                     re.sub(r"(\d(?:\.\d+)?)e-0?(\d)", r"\1 × 10<super>-\2</super>", x.reason.replace(" 1e-4", " 10<super>-4</super>"))])
     s += [grid(rows, [0.4 * inch, 0.6 * inch, 1.5 * inch, 4.1 * inch])]
     s += [Spacer(1, 6)]
     s += [box("Key takeaway",
@@ -144,10 +154,11 @@ def story_for(base, ex, filled, figs, k):
     s += B(["One run per setting, mostly seed 99. The long-L-BFGS cells were not repeated with other seeds.",
             "\"Smallest %\" in a green cell is the smallest % that was tried with long L-BFGS, not every %. For "
             "example at T = 2, 10<sup>-6</sup> was tried at 0.25% and 2% only.",
-            "Still running: T = 2.5 at 1% continuing to 250,000 L-BFGS steps (to try for 10<super>-6</super>), and "
-            "T = 3 at 10% continuing to 200,000 steps (to try for 10<super>-4</super>). Both pick up from the "
-            "saved checkpoints at 100,000 and 60,000 steps; L-BFGS restarts its memory there, which is a small "
-            "change from one unbroken run. The table and this section will be updated if either fills a cell.",
+            "The two follow-up runs (T = 2.5 to 250,000 steps, T = 3 to 200,000) were stopped at 180,000 and 140,000 "
+            "steps, after the cloud machine restarted twice under them and both had flattened out (Figure 21.2). "
+            "They resumed from saved checkpoints; L-BFGS restarts its memory there, a small change from one "
+            "unbroken run. Reaching the last four cells would need a different method (for example time-marching, "
+            "or a larger network), not more data or more steps.",
             "Long L-BFGS is slow on CPU: 60,000 steps at T = 3 took 5.6 hours on one core."])
     s += [P("21.7 Files", h2)]
     s += [P("Code: <font face='Courier'>scripts/pct_sweep.py</font> (runs, with --lbfgs, --maxfun, --seed and "

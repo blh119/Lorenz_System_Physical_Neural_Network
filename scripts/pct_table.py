@@ -58,14 +58,15 @@ def table(df):
                                  setting=setting(r), rel_l2=r.rel_l2, run=r["name"]))
             else:
                 best = sub.dropna(subset=["rel_l2"]).sort_values("rel_l2").iloc[0]
-                rows.append(dict(T=T, level=txt, status="failed", pct=np.nan, n_data=np.nan, setting="",
+                rows.append(dict(T=T, level=txt, status="failed", pct=best.pct_reference, n_data=int(best.n_data),
+                                 setting=f"after {int(best.lbfgs_steps) // 1000}k L-BFGS steps",
                                  rel_l2=best.rel_l2, run=best["name"]))
     return pd.DataFrame(rows)
 
 
 def cell_text(r):
     if r.status == "failed":
-        return f"FAILED\nbest {r.rel_l2:.0e}"
+        return f"FAILED\nbest {r.rel_l2:.1e}\nat {r.pct:g}% ({int(r.n_data):,} pts)"
     t = f"{r.pct:g}%\n{int(r.n_data):,} pts"
     return t + (f"\n({r.setting})" if r.setting else "")
 
@@ -104,7 +105,7 @@ def main(d):
     ax.set_title("One network on [0, T]: smallest tested % of the RK4 reference points that reaches each relative-L2 level\n"
                  "tested 0.01% to 100% of the reference (dt = 1e-4), data spread evenly. Blue: original settings "
                  "(seed 99, 5,000 L-BFGS steps).\nGreen: only reached with a longer L-BFGS cap or another seed. "
-                 "Red: no run reached it (best error shown).", fontsize=11, pad=34)
+                 "Red: no run reached it (best error and the % that got it shown).", fontsize=11, pad=34)
     fig.savefig(os.path.join(d, "pct_needed_table_filled.png"), dpi=150, bbox_inches="tight")
     plt.close(fig)
 
@@ -127,7 +128,7 @@ def main(d):
         for j, txt in enumerate(LEVEL_TXT, 3):
             r = tab[(tab["T"] == T) & (tab["level"] == txt)].iloc[0]
             if r.status == "failed":
-                v = f"FAILED (best {r.rel_l2:.1e})"; fill = "F6D5D5"; font = Font(color="AA3333")
+                v = f"FAILED (best {r.rel_l2:.1e} at {r.pct:g}%, {int(r.n_data):,} pts, {r.setting})"; fill = "F6D5D5"; font = Font(color="AA3333")
             else:
                 v = f"{r.pct:g}% ({int(r.n_data):,} pts)" + (f", {r.setting}" if r.setting else "")
                 fill = "D9EAD3" if r.setting else None; font = Font()
@@ -141,13 +142,14 @@ def main(d):
         ws.column_dimensions[k].width = 24
 
     ws2 = wb.create_sheet("Reasons")
-    ws2.append(["T", "Level", "Status", "Run used", "Its relative L2", "Reason (failed cells) / note"])
+    ws2.append(["T", "Level", "Status", "Run used", "Its relative L2", "% of data", "Data points", "L-BFGS cap / seed",
+                "Reason (failed cells) / note"])
     for c in ws2[1]:
         c.font = Font(bold=True)
     for r in tab.itertuples():
-        ws2.append([r.T, r.level, r.status, r.run, float(r.rel_l2),
+        ws2.append([r.T, r.level, r.status, r.run, float(r.rel_l2), float(r.pct), int(r.n_data), r.setting or "5k L-BFGS cap, seed 99",
                     r.reason if isinstance(r.reason, str) else (r.setting or "")])
-    ws2.column_dimensions["D"].width = 34; ws2.column_dimensions["F"].width = 110
+    ws2.column_dimensions["D"].width = 34; ws2.column_dimensions["H"].width = 18; ws2.column_dimensions["I"].width = 110
 
     ws3 = wb.create_sheet("All runs")
     cols = ["name", "T", "pct_reference", "n_data", "n_reference", "lbfgs_cap", "lbfgs_steps", "seed",

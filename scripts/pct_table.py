@@ -44,12 +44,15 @@ def setting(r):
     return ", ".join(bits)
 
 
-def table(df):
+def table(df, mult=1):
+    """mult=10: a level counts as reached when the error has the same order of magnitude
+    (e.g. anything below 1e-5 counts as 1e-6)."""
     rows = []
     for T in sorted(df["T"].unique()):
         sub = df[df["T"] == T]
         for lev, txt in zip(LEVELS, LEVEL_TXT):
-            hit = sub[sub["rel_l2"] <= lev]
+            # the 1e-1 column keeps <= 1e-1: "under 1" would count runs stuck at 50-95% error
+            hit = sub[sub["rel_l2"] <= lev] if (mult == 1 or lev >= 0.1) else sub[sub["rel_l2"] < lev * mult]
             std = hit[hit["standard"]]
             pick = std if len(std) else hit
             if len(pick):
@@ -71,13 +74,16 @@ def cell_text(r):
     return t + (f"\n({r.setting})" if r.setting else "")
 
 
-def main(d):
+def main(d, mult=1):
     df = load(d)
-    tab = table(df)
+    tab = table(df, mult)
+    sfx = "" if mult == 1 else "_order_of_magnitude"
+    head = LEVEL_TXT if mult == 1 else [f"{t[2:]} order\n(under {l * mult:.0e})".replace("e-0", "e-") if l < 0.1 else "≤ 1e-1\n(unchanged)"
+                                     for t, l in zip(LEVEL_TXT, LEVELS)]
     reasons_path = os.path.join(d, "extra", "reasons.csv")
     reasons = pd.read_csv(reasons_path) if os.path.exists(reasons_path) else pd.DataFrame(columns=["T", "level", "reason"])
     tab = tab.merge(reasons, on=["T", "level"], how="left")
-    tab.to_csv(os.path.join(d, "pct_needed_filled.csv"), index=False)
+    tab.to_csv(os.path.join(d, f"pct_needed_filled{sfx}.csv"), index=False)
     df.drop(columns="standard").to_csv(os.path.join(d, "pct_sweep_all_runs.csv"), index=False)
 
     Ts = sorted(df["T"].unique())
@@ -100,13 +106,15 @@ def main(d):
                     color = plt.cm.Greens(0.25 + 0.4 * shade)
             ax.add_patch(plt.Rectangle((j + 0.015, i + 0.03), 0.97, 0.94, color=color))
             ax.text(j + 0.5, i + 0.5, cell_text(r), ha="center", va="center", fontsize=11, color=fc)
-    for j, txt in enumerate(LEVEL_TXT):
+    for j, txt in enumerate(head):
         ax.text(j + 0.5, -0.12, txt, ha="center", va="bottom", fontsize=12)
     ax.set_title("One network on [0, T]: smallest tested % of the RK4 reference points that reaches each relative-L2 level\n"
                  "tested 0.01% to 100% of the reference (dt = 1e-4), data spread evenly. Blue: original settings "
                  "(seed 99, 5,000 L-BFGS steps).\nGreen: only reached with a longer L-BFGS cap or another seed. "
-                 "Red: no run reached it (best error and the % that got it shown).", fontsize=11, pad=34)
-    fig.savefig(os.path.join(d, "pct_needed_table_filled.png"), dpi=150, bbox_inches="tight")
+                 "Red: no run reached it (best error and the % that got it shown)."
+                 + ("" if mult == 1 else "\nA level counts as reached when the error has the same order of magnitude "
+                    "(for example anything under 1e-5 counts as 1e-6).\nThe 1e-1 column stays at <= 1e-1, since \"under 1\" would count runs stuck at 50% to 95% error."), fontsize=11, pad=34 if mult == 1 else 64)
+    fig.savefig(os.path.join(d, f"pct_needed_table_filled{sfx}.png"), dpi=150, bbox_inches="tight")
     plt.close(fig)
 
     # ---- Excel ----
@@ -118,7 +126,11 @@ def main(d):
                 "(seed 99, 5,000 L-BFGS steps). Green: needed a longer L-BFGS cap or another seed. Red: FAILED (see Reasons).")
     ws["A1"].font = Font(bold=True, size=12); ws["A2"].font = Font(italic=True, color="555555")
     thin = Side(style="thin", color="BBBBBB"); b = Border(top=thin, bottom=thin, left=thin, right=thin)
-    for j, h in enumerate(["T", "Reference points"] + LEVEL_TXT, 1):
+    if mult != 1:
+        ws["A3"] = ("Rule: a level counts as reached when the error has the same order of magnitude (anything under 1e-5 counts as 1e-6). "
+                    "The 1e-1 column stays at <= 1e-1, since 'under 1' would count runs stuck at 50% to 95% error.")
+        ws["A3"].font = Font(bold=True, color="1F5FA8")
+    for j, h in enumerate(["T", "Reference points"] + [h.replace("\n", " ") for h in head], 1):
         c = ws.cell(4, j, h); c.font = Font(bold=True); c.border = b
         c.fill = PatternFill("solid", fgColor="DDE6F0"); c.alignment = Alignment(horizontal="center")
     for i, T in enumerate(Ts, 5):
@@ -160,9 +172,11 @@ def main(d):
     for r in df.sort_values(["T", "pct_reference", "lbfgs_cap", "seed"])[cols].itertuples(index=False):
         ws3.append([None if (isinstance(x, float) and np.isnan(x)) else x for x in r])
     ws3.column_dimensions["A"].width = 30
-    wb.save(os.path.join(d, "pct_needed_table_filled.xlsx"))
+    wb.save(os.path.join(d, f"pct_needed_table_filled{sfx}.xlsx"))
     print(tab[["T", "level", "status", "pct", "setting", "rel_l2"]].to_string())
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "../results/pct_sweep")
+    d = sys.argv[1] if len(sys.argv) > 1 else "../results/pct_sweep"
+    main(d)
+    main(d, mult=10)  # order-of-magnitude version

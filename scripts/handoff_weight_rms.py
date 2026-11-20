@@ -18,6 +18,10 @@ A window counts as off the rails when its end point is more than --fail-err
 away from the reference (3D distance). Such windows are drawn in red, and the
 last point before the first one is the "last good handoff".
 
+Under each graph is the training loss of the window that ends at that handoff:
+its final loss (after L-BFGS, the network that is handed over) and, dashed, its
+loss after the Adam epochs. Both come from the runs' losses_XX.csv files.
+
 Example (the runs used for the graphs):
     python time_marching.py --T 5 --window 0.25 --save-dir runs/warm --save-predictions runs/pred_warm.csv
     python time_marching.py --T 5 --window 0.25 --no-warm-start --save-dir runs/fresh \\
@@ -35,6 +39,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 N_HIDDEN_ARRAYS = 8   # kernels and biases of the 4 hidden layers (w_0 .. w_7)
+ADAM_EPOCHS = 10000   # Adam epochs per window; the rows after these are L-BFGS steps
 
 
 def hidden_rms(d, snap):
@@ -53,84 +58,75 @@ def load(folder, pred_csv):
         if ref is not None:
             k = int(os.path.basename(p)[7:9])
             err = float(ref.loc[ref["window"] == k, "err_3d"].iloc[-1])
-        rows.append(dict(window=int(os.path.basename(p)[7:9]) + 1, start=start, handoff_t=end,
+        k = int(os.path.basename(p)[7:9])
+        losses = pd.read_csv(os.path.join(folder, f"losses_{k:02d}.csv"))
+        adam = losses.loc[losses["epoch"] <= ADAM_EPOCHS, "total"]
+        rows.append(dict(window=k + 1, start=start, handoff_t=end,
                          rms_start=hidden_rms(d, "start"), rms_handoff=hidden_rms(d, "final"),
-                         handoff_err_3d=err))
+                         handoff_err_3d=err, loss_after_adam=float(adam.iloc[-1]),
+                         loss_handoff=float(losses["total"].iloc[-1])))
     return pd.DataFrame(rows)
 
 
-def draw(df, base, title, color, path, ymax, fail_err):
-    fig, ax = plt.subplots(figsize=(11, 4.6), dpi=150)
-    t = np.r_[0.0, df["handoff_t"].values]
-    y = np.r_[df["rms_start"].iloc[0], df["rms_handoff"].values] / base
-    bad = np.r_[False, df["handoff_err_3d"].values > fail_err]
-    for tv in t[1:]:
-        ax.axvline(tv, color="0.5", lw=0.5, ls=":", zorder=0)
-    ax.axhline(1.0, color="0.5", lw=1, ls="--")
-    ax.text(t[-1] + 0.08, 1.0, "new random\nnetwork", va="center", fontsize=8, color="0.35")
-    ax.plot(t, y, color=color, lw=2, zorder=2)
-    ax.scatter(t[~bad], y[~bad], color=color, s=36, zorder=3)
-    label = [ti == int(ti) for ti in t]        # label whole-number handoffs only
-    if bad.any():
-        first = int(np.argmax(bad))
-        ax.scatter(t[bad], y[bad], color="#d62728", s=60, marker="X", zorder=4,
-                   label="window went off the rails")
-        ax.scatter([t[first - 1]], [y[first - 1]], s=140, facecolors="none", edgecolors="black",
-                   lw=1.5, zorder=4, label=f"last good handoff (t = {t[first - 1]:g})")
-        ax.legend(loc="upper left", frameon=False, fontsize=9)
-        label[first - 1] = True
-    for ti, yi, show in zip(t, y, label):
-        if show:
-            ax.annotate(f"{yi:.2f}", (ti, yi), textcoords="offset points", xytext=(0, 9),
-                        ha="center", fontsize=9)
-    ax.set_xticks(np.arange(0, t[-1] + 0.01, 1.0))
-    ax.set_xlim(-0.2, t[-1] + 0.45)
-    ax.set_ylim(0, ymax)
-    ax.set_xlabel("t (dotted lines are handoffs)")
-    ax.set_ylabel("hidden-weight size\n(RMS, 1 = new random network)")
-    ax.set_title(title, fontsize=12)
-    ax.spines[["top", "right"]].set_visible(False)
-    fig.tight_layout()
-    fig.savefig(path)
-    plt.close(fig)
+def draw(runs, base, title, path, ymax, fail_err):
+    """Top: hidden-weight size at each handoff. Bottom: loss at each handoff, same t axis.
 
-
-def draw_both(runs, base, path, ymax, fail_err):
-    """Both runs on one axes. runs: list of (df, label, color, label_offset_pts)."""
-    fig, ax = plt.subplots(figsize=(11, 4.8), dpi=150)
+    runs: list of (df, label, color). The red X's and the last-good circle are drawn
+    for any run that has windows that went off the rails.
+    """
+    fig, (ax, axl) = plt.subplots(2, 1, figsize=(11, 7.2), dpi=150, sharex=True,
+                                  gridspec_kw=dict(height_ratios=[2, 1.3]))
     t_all = np.r_[0.0, runs[0][0]["handoff_t"].values]
-    for tv in t_all[1:]:
-        ax.axvline(tv, color="0.5", lw=0.5, ls=":", zorder=0)
+    for a in (ax, axl):
+        for tv in t_all[1:]:
+            a.axvline(tv, color="0.5", lw=0.5, ls=":", zorder=0)
+        a.spines[["top", "right"]].set_visible(False)
     ax.axhline(1.0, color="0.5", lw=1, ls="--")
     ax.text(t_all[-1] + 0.08, 1.0, "new random\nnetwork", va="center", fontsize=8, color="0.35")
     marked = False
-    for df, label, color, dy in runs:
+    for df, label, color in runs:
         t = np.r_[0.0, df["handoff_t"].values]
         y = np.r_[df["rms_start"].iloc[0], df["rms_handoff"].values] / base
         bad = np.r_[False, df["handoff_err_3d"].values > fail_err]
         ax.plot(t, y, color=color, lw=2, zorder=2, label=label)
         ax.scatter(t[~bad], y[~bad], color=color, s=32, zorder=3)
-        show = [ti == int(ti) and ti > 0 for ti in t]
+        show = [ti == int(ti) for ti in t]
+        if len(runs) > 1:
+            show[0] = False
+        th, lh, ah = df["handoff_t"].values, df["loss_handoff"].values, df["loss_after_adam"].values
+        bad_h = bad[1:]
+        axl.plot(th, lh, color=color, lw=2, zorder=2)
+        axl.scatter(th[~bad_h], lh[~bad_h], color=color, s=28, zorder=3)
+        axl.plot(th, ah, color=color, lw=1.2, ls="--", alpha=0.8, zorder=2)
         if bad.any():
             first = int(np.argmax(bad))
             ax.scatter(t[bad], y[bad], color="#d62728", s=60, marker="X", zorder=4,
                        label=None if marked else "window went off the rails")
             ax.scatter([t[first - 1]], [y[first - 1]], s=140, facecolors="none", edgecolors="black",
                        lw=1.5, zorder=4, label=f"last good handoff (t = {t[first - 1]:g})")
+            axl.scatter(th[bad_h], lh[bad_h], color="#d62728", s=60, marker="X", zorder=4)
+            axl.scatter([th[first - 2]], [lh[first - 2]], s=140, facecolors="none", edgecolors="black",
+                        lw=1.5, zorder=4)
             show[first - 1] = True
             marked = True
         for ti, yi, sh in zip(t, y, show):
             if sh:
-                ax.annotate(f"{yi:.2f}", (ti, yi), textcoords="offset points", xytext=(0, dy),
+                ax.annotate(f"{yi:.2f}", (ti, yi), textcoords="offset points", xytext=(0, 11),
                             ha="center", va="center", fontsize=9, color=color)
-    ax.set_xticks(np.arange(0, t_all[-1] + 0.01, 1.0))
-    ax.set_xlim(-0.2, t_all[-1] + 0.45)
     ax.set_ylim(0, ymax)
-    ax.set_xlabel("t (dotted lines are handoffs)")
     ax.set_ylabel("hidden-weight size\n(RMS, 1 = new random network)")
-    ax.set_title("Hidden-weight size at each handoff: warm start vs a new network every window", fontsize=12)
+    ax.set_title(title, fontsize=12)
     ax.legend(loc="upper left", frameon=False, fontsize=9)
-    ax.spines[["top", "right"]].set_visible(False)
+    axl.set_yscale("log")
+    axl.set_ylim(1e-11, 1e2)
+    axl.set_yticks([1e-10, 1e-8, 1e-6, 1e-4, 1e-2, 1e0])
+    axl.set_ylabel("training loss\nat the handoff")
+    axl.plot([], [], color="0.3", lw=2, label="final loss (after L-BFGS), handed over")
+    axl.plot([], [], color="0.3", lw=1.2, ls="--", label="loss after the 10,000 Adam epochs")
+    axl.legend(loc="upper left", frameon=False, fontsize=8.5, ncol=2)
+    axl.set_xticks(np.arange(0, t_all[-1] + 0.01, 1.0))
+    axl.set_xlim(-0.2, t_all[-1] + 0.45)
+    axl.set_xlabel("t (dotted lines are handoffs)")
     fig.tight_layout()
     fig.savefig(path)
     plt.close(fig)
@@ -152,13 +148,15 @@ def main():
         df["rms_handoff_norm"] = df["rms_handoff"] / base
         df["rms_start_norm"] = df["rms_start"] / base
     ymax = 1.2 * max(warm["rms_handoff_norm"].max(), fresh["rms_handoff_norm"].max(), 1.0)
-    draw(warm, base, "Warm start: each window starts from the previous window's weights",
-         "#c23b8a", os.path.join(a.out, "weight_rms_warm.png"), ymax, a.fail_err)
-    draw(fresh, base, "No warm start: a new random network in every window",
-         "#2e9e6b", os.path.join(a.out, "weight_rms_fresh.png"), ymax, a.fail_err)
-    draw_both([(warm, "warm start (weights copied from the previous window)", "#c23b8a", 11),
-               (fresh, "no warm start (new random network every window)", "#2e9e6b", 11)],
-              base, os.path.join(a.out, "weight_rms_both.png"), ymax, a.fail_err)
+    warm_run = (warm, "warm start (weights copied from the previous window)", "#c23b8a")
+    fresh_run = (fresh, "no warm start (new random network every window)", "#2e9e6b")
+    draw([warm_run], base, "Warm start: each window starts from the previous window's weights",
+         os.path.join(a.out, "weight_rms_warm.png"), ymax, a.fail_err)
+    draw([fresh_run], base, "No warm start: a new random network in every window",
+         os.path.join(a.out, "weight_rms_fresh.png"), ymax, a.fail_err)
+    draw([warm_run, fresh_run], base,
+         "Hidden-weight size at each handoff: warm start vs a new network every window",
+         os.path.join(a.out, "weight_rms_both.png"), ymax, a.fail_err)
     out = pd.concat([warm.assign(run="warm"), fresh.assign(run="fresh")])
     out.to_csv(os.path.join(a.out, "weight_rms.csv"), index=False)
     print(out.to_string(index=False))

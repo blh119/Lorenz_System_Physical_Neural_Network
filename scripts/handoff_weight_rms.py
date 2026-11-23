@@ -19,8 +19,8 @@ away from the reference (3D distance). Such windows are drawn in red, and the
 last point before the first one is the "last good handoff".
 
 Under each graph is the training loss of the window that ends at that handoff:
-its final loss (after L-BFGS, the network that is handed over) and, dashed, its
-loss after the Adam epochs. Both come from the runs' losses_XX.csv files.
+its final loss (after L-BFGS, the network that is handed over), from the runs'
+losses_XX.csv files.
 
 Example (the runs used for the graphs):
     python time_marching.py --T 5 --window 0.25 --save-dir runs/warm --save-predictions runs/pred_warm.csv
@@ -78,6 +78,8 @@ def draw(runs, base, title, path, ymax, fail_err):
                                   gridspec_kw=dict(height_ratios=[2, 1.3]))
     t_all = np.r_[0.0, runs[0][0]["handoff_t"].values]
     for a in (ax, axl):
+        for tv in t_all[1:]:
+            a.axvline(tv, color="0.5", lw=0.5, ls=":", zorder=0)
         a.spines[["top", "right"]].set_visible(False)
     ax.axhline(1.0, color="0.5", lw=1, ls="--")
     ax.text(t_all[-1] + 0.08, 1.0, "new random\nnetwork", va="center", fontsize=8, color="0.35")
@@ -91,11 +93,10 @@ def draw(runs, base, title, path, ymax, fail_err):
         show = [ti == int(ti) for ti in t]
         if len(runs) > 1:
             show[0] = False
-        th, lh, ah = df["handoff_t"].values, df["loss_handoff"].values, df["loss_after_adam"].values
+        th, lh = df["handoff_t"].values, df["loss_handoff"].values
         bad_h = bad[1:]
         axl.plot(th, lh, color=color, lw=2, zorder=2)
         axl.scatter(th[~bad_h], lh[~bad_h], color=color, s=28, zorder=3)
-        axl.plot(th, ah, color=color, lw=1.2, ls="--", alpha=0.8, zorder=2)
         if bad.any():
             first = int(np.argmax(bad))
             ax.scatter(t[bad], y[bad], color="#d62728", s=60, marker="X", zorder=4,
@@ -118,13 +119,10 @@ def draw(runs, base, title, path, ymax, fail_err):
     axl.set_yscale("log")
     axl.set_ylim(1e-11, 1e2)
     axl.set_yticks([1e-10, 1e-8, 1e-6, 1e-4, 1e-2, 1e0])
-    axl.set_ylabel("training loss\nat the handoff")
-    axl.plot([], [], color="0.3", lw=2, label="final loss (after L-BFGS), handed over")
-    axl.plot([], [], color="0.3", lw=1.2, ls="--", label="loss after the 10,000 Adam epochs")
-    axl.legend(loc="upper left", frameon=False, fontsize=8.5, ncol=2)
+    axl.set_ylabel("final training loss\nat the handoff")
     axl.set_xticks(np.arange(0, t_all[-1] + 0.01, 1.0))
     axl.set_xlim(-0.2, t_all[-1] + 0.45)
-    axl.set_xlabel("t (each point is a handoff, every 0.25)")
+    axl.set_xlabel("t (dotted lines are handoffs)")
     fig.tight_layout()
     fig.savefig(path)
     plt.close(fig)

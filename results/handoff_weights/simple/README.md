@@ -4,9 +4,9 @@ Same runs as `../handoff_errors.png`: T = 5, 20 windows of 0.25 time units (hand
 
 **The number.** At each handoff, take every weight and bias in the 4 hidden layers of 64 units (12,736 numbers; the output layer is left out) from the window's final network, and compute their RMS. Divide by the RMS of the random network the run started from (0.123). So 1.0 means "the same size as a newly made network" and 4.0 means "four times bigger". Both graphs use the same y-axis so they can be compared directly.
 
-**The loss panel.** Under each weight graph is the training loss of the window that ends at that handoff, on the same t axis (log scale). The solid line is the final loss after L-BFGS, which belongs to the network that gets handed over. The dashed line is the loss after the 10,000 Adam epochs, before L-BFGS. Both come from `../runs/*/losses_XX.csv`.
+**The loss panel.** Under each weight graph is the training loss of the window that ends at that handoff, on the same t axis (log scale). It is the final loss after L-BFGS, which belongs to the network that gets handed over, from `../runs/*/losses_XX.csv`.
 
-**What the loss shows.** The final loss gives no warning: both runs sit between 1e-10 and 1e-8 at every good handoff, warm included, right up to t = 4.25. Then warm jumps to 2.4 in one window. The loss after Adam does give a warning. Fresh stays near 1e-7 to 1e-6 the whole way. Warm creeps up from about 1e-6 to 1.5e-4 by t = 4.25, rising alongside the weight size. L-BFGS was hiding the problem until the window where it could no longer fix it.
+**What the loss shows.** The final loss gives no warning: both runs sit between 1e-10 and 1e-8 at every good handoff, warm included, right up to t = 4.25. Then warm jumps to 2.4 in one window. The weight size above it climbs steadily the whole time, so it is the better early warning.
 
 ## `weight_rms_both.png` (both on one graph)
 

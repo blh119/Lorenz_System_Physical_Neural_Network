@@ -48,6 +48,7 @@ fig=plt.figure(figsize=(9,7.5)); ax=fig.add_subplot(projection="3d"); setup(ax);
 ax.legend(loc="upper left",fontsize=8)
 lc=Line3DCollection([],cmap=cmap,linewidth=1.1); lc.set_clim(0,20); ax.add_collection(lc)
 head,=ax.plot([],[],[],"o",c="red",ms=7,mec="k")
+ax.view_init(22,-58)  # fixed camera, same view as the static PNG
 cb=fig.colorbar(plt.cm.ScalarMappable(norm=plt.Normalize(0,20),cmap=cmap),ax=ax,shrink=0.55,pad=0.08); cb.set_label("time t")
 title=ax.set_title("")
 NF=400; ends=np.linspace(2,len(t),NF).astype(int)
@@ -56,7 +57,6 @@ def upd(k):
     head.set_data_3d([x[n-1]],[y[n-1]],[z[n-1]])
     nf=int((flips<=t[n-1]).sum())
     title.set_text(f"Lorenz system, RK4 reference   t = {t[n-1]:5.2f}   wing flips: {nf}")
-    ax.view_init(22,-58+60*np.sin(2*np.pi*k/NF))
     return lc,head,title
 an=animation.FuncAnimation(fig,upd,frames=NF,blit=False)
 an.save(OUT+"lorenz_3d_motion.mp4",writer=animation.FFMpegWriter(fps=20,bitrate=3000),dpi=120)

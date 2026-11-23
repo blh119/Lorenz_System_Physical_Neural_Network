@@ -78,8 +78,6 @@ def draw(runs, base, title, path, ymax, fail_err):
                                   gridspec_kw=dict(height_ratios=[2, 1.3]))
     t_all = np.r_[0.0, runs[0][0]["handoff_t"].values]
     for a in (ax, axl):
-        for tv in t_all[1:]:
-            a.axvline(tv, color="0.5", lw=0.5, ls=":", zorder=0)
         a.spines[["top", "right"]].set_visible(False)
     ax.axhline(1.0, color="0.5", lw=1, ls="--")
     ax.text(t_all[-1] + 0.08, 1.0, "new random\nnetwork", va="center", fontsize=8, color="0.35")
@@ -126,7 +124,7 @@ def draw(runs, base, title, path, ymax, fail_err):
     axl.legend(loc="upper left", frameon=False, fontsize=8.5, ncol=2)
     axl.set_xticks(np.arange(0, t_all[-1] + 0.01, 1.0))
     axl.set_xlim(-0.2, t_all[-1] + 0.45)
-    axl.set_xlabel("t (dotted lines are handoffs)")
+    axl.set_xlabel("t (each point is a handoff, every 0.25)")
     fig.tight_layout()
     fig.savefig(path)
     plt.close(fig)

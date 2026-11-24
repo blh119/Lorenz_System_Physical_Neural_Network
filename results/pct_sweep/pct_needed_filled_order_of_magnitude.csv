@@ -1,0 +1,31 @@
+T,level,status,pct,n_data,setting,rel_l2,run,reason
+1.0,≤ 1e-6,reached,0.1,10,,3.4575427398949124e-06,T1_pct0.1,
+1.0,≤ 1e-5,reached,0.1,10,,3.4575427398949124e-06,T1_pct0.1,
+1.0,≤ 1e-4,reached,0.1,10,,3.4575427398949124e-06,T1_pct0.1,
+1.0,≤ 1e-3,reached,0.1,10,,3.4575427398949124e-06,T1_pct0.1,
+1.0,≤ 1e-2,reached,0.1,10,,3.4575427398949124e-06,T1_pct0.1,
+1.0,≤ 1e-1,reached,0.1,10,,3.4575427398949124e-06,T1_pct0.1,
+1.5,≤ 1e-6,reached,0.25,38,,8.254152439357096e-06,T1.5_pct0.25,
+1.5,≤ 1e-5,reached,0.1,15,,6.449085453846173e-05,T1.5_pct0.1,
+1.5,≤ 1e-4,reached,0.1,15,,6.449085453846173e-05,T1.5_pct0.1,
+1.5,≤ 1e-3,reached,0.1,15,,6.449085453846173e-05,T1.5_pct0.1,
+1.5,≤ 1e-2,reached,0.1,15,,6.449085453846173e-05,T1.5_pct0.1,
+1.5,≤ 1e-1,reached,0.1,15,,6.449085453846173e-05,T1.5_pct0.1,
+2.0,≤ 1e-6,reached,0.25,50,60k L-BFGS cap,1.896496614615303e-06,T2_pct0.25_lbfgs60000_maxfun120000,
+2.0,≤ 1e-5,reached,0.25,50,,5.668911034459872e-05,T2_pct0.25,
+2.0,≤ 1e-4,reached,0.1,20,,0.0001456282222753,T2_pct0.1,
+2.0,≤ 1e-3,reached,0.1,20,,0.0001456282222753,T2_pct0.1,
+2.0,≤ 1e-2,reached,0.1,20,,0.0001456282222753,T2_pct0.1,
+2.0,≤ 1e-1,reached,0.1,20,,0.0001456282222753,T2_pct0.1,
+2.5,≤ 1e-6,reached,1.0,250,100k L-BFGS cap,5.284135343427809e-06,T2.5_pct1_lbfgs100000_maxfun200000,"Best 3.9e-6, at 1% of the points (250) after 180,000 L-BFGS steps. The error fell to 1.0e-5 at 50,000 steps and 5.3e-6 at 100,000, then flattened out (3.85e-6 to 3.87e-6 at 175,000 to 180,000), still about 4 times too big. More data does not help: every amount from 2% to 100% got stuck at about 55% error before L-BFGS even started."
+2.5,≤ 1e-5,reached,1.0,250,20k L-BFGS cap,4.780907214026365e-05,T2.5_pct1_lbfgs20000,
+2.5,≤ 1e-4,reached,1.0,250,,0.000162287743869,T2.5_pct1,
+2.5,≤ 1e-3,reached,0.5,125,,0.0047757414063322,T2.5_pct0.5,
+2.5,≤ 1e-2,reached,0.5,125,,0.0047757414063322,T2.5_pct0.5,
+2.5,≤ 1e-1,reached,0.5,125,,0.0047757414063322,T2.5_pct0.5,
+3.0,≤ 1e-6,failed,10.0,3000,after 140k L-BFGS steps,0.0005841032,T3_pct10_lbfgs200000_maxfun400000,"Same run and reason as T = 3 at 1e-4: it didn't get under 1e-4, so it can't reach this level either."
+3.0,≤ 1e-5,failed,10.0,3000,after 140k L-BFGS steps,0.0005841032,T3_pct10_lbfgs200000_maxfun400000,"Same run and reason as T = 3 at 1e-4: it didn't get under 1e-4, so it can't reach this level either."
+3.0,≤ 1e-4,reached,10.0,3000,60k L-BFGS cap,0.0006730462047993,T3_pct10_lbfgs60000_maxfun120000,"Best 5.2e-4, at 10% of the points (3,000), reached at 125,000 L-BFGS steps; after that it wandered between 5.2e-4 and 5.8e-4 up to 140,000 steps, about 5 times too big. Every other amount, including 50% and 100% of the points, got stuck at 51% to 96% error during Adam, and other seeds (7 and 123 at 10%, 7 at 100%) failed the same way. More data does not help: one network on [0, 3] does not train reliably."
+3.0,≤ 1e-3,reached,10.0,3000,,0.0070897937195249,T3_pct10,
+3.0,≤ 1e-2,reached,10.0,3000,,0.0070897937195249,T3_pct10,
+3.0,≤ 1e-1,reached,10.0,3000,,0.0070897937195249,T3_pct10,

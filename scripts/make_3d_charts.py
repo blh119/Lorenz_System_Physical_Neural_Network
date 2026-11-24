@@ -1,6 +1,6 @@
 """Make 3D x-y-z charts of the Lorenz RK4 reference trajectory, t in [0, 20].
 
-Outputs: lorenz_3d_static.png, lorenz_3d_motion.mp4 (needs ffmpeg), lorenz_3d_motion.gif,
+Outputs: lorenz_3d_static.png, lorenz_xyz_vs_time.png, lorenz_3d_motion.mp4 (needs ffmpeg), lorenz_3d_motion.gif,
 lorenz_3d_interactive.html. Requires numpy, pandas, matplotlib, plotly.
 Usage: python make_3d_charts.py --csv <reference.csv> --out <folder>
 """
@@ -43,6 +43,19 @@ cb=fig.colorbar(lc,ax=ax,shrink=0.6,pad=0.08); cb.set_label("time t")
 ax.legend(loc="upper left",fontsize=9)
 ax.set_title("Lorenz attractor, RK4 reference, t ∈ [0, 20]\nσ = 10, ρ = 28, β = 8/3",fontsize=13)
 fig.savefig(OUT+"lorenz_3d_static.png",dpi=200,bbox_inches="tight"); plt.close(fig)
+# ---- x(t), y(t), z(t) time series with wing-flip lines ----
+fig,axs=plt.subplots(3,1,figsize=(12,8),sharex=True)
+for a,v,lab,col in zip(axs,[x,y,z],["x(t)","y(t)","z(t)"],["#1f77b4","#2ca02c","#d62728"]):
+    a.plot(t,v,c=col,lw=1.1)
+    for k,f in enumerate(flips):
+        a.axvline(f,c="0.35",ls="--",lw=0.9,label="Wing flip (x changes sign)" if k==0 else None)
+    a.set_ylabel(lab); a.grid(alpha=0.3)
+    if lab!="z(t)": a.axhline(0,c="0.6",lw=0.6)
+for f in flips: axs[0].text(f,1.01,f"{f:.3f}",transform=axs[0].get_xaxis_transform(),rotation=90,va="bottom",ha="center",fontsize=8,color="0.25")
+axs[0].legend(loc="lower left",fontsize=9)
+axs[-1].set_xlabel("time t"); axs[-1].set_xlim(0,20)
+axs[0].set_title("Lorenz system, RK4 reference, t ∈ [0, 20]   (σ = 10, ρ = 28, β = 8/3)",fontsize=13,pad=34)
+fig.tight_layout(); fig.savefig(OUT+"lorenz_xyz_vs_time.png",dpi=200); plt.close(fig)
 # ---- animation ----
 fig=plt.figure(figsize=(9,7.5)); ax=fig.add_subplot(projection="3d"); setup(ax); fixed(ax)
 ax.legend(loc="upper left",fontsize=8)
